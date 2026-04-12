@@ -1,0 +1,15 @@
+name: crypto-signals
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - flask
+    - flask-cors
+    - sqlalchemy
+    - flask-sqlalchemy
+    - psycopg2-binary
+    - python-dotenv
+    - requests
+    - pandas
+    - numpy
+    - apscheduler
