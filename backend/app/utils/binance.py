@@ -10,7 +10,7 @@ def fetch_klines(symbol: str, interval: str, start_time: int, end_time: int):
     Fetch OHLCV data from Binance REST API and paginate automatically.
     start_time and end_time should be provided in milliseconds.
     """
-    base_url = "https://api.binance.com/api/v3/klines"
+    base_url = "https://fapi.binance.com/fapi/v1/klines"
     limit = 1000
     all_candles = []
     
@@ -75,7 +75,7 @@ class BinanceStreamManager:
     - Thread-safe start/stop
     """
 
-    BINANCE_WS_BASE = "wss://stream.binance.com:9443/stream"
+    BINANCE_WS_BASE = "wss://fstream.binance.com/stream"
 
     def __init__(
         self,

@@ -21,7 +21,7 @@ class TestBinanceStreamURL:
         mgr = BinanceStreamManager("BTCUSDT", ["1h"])
         url = mgr._build_stream_url()
         assert "btcusdt@kline_1h" in url
-        assert url.startswith("wss://stream.binance.com:9443/stream?streams=")
+        assert url.startswith("wss://fstream.binance.com/stream?streams=")
 
     def test_multiple_timeframes_url(self):
         mgr = BinanceStreamManager("ETHUSDT", ["15m", "1h", "4h"])
