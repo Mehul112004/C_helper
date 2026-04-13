@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import HistoricalData from './pages/HistoricalData/HistoricalData';
 import SignalFeed from './pages/SignalFeed/SignalFeed';
+import Backtest from './pages/Backtest/Backtest';
 import { LineChart, LayoutDashboard, History } from 'lucide-react';
 
 function NavLink({ to, icon: Icon, label }: { to: string; icon: React.ElementType; label: string }) {
@@ -38,11 +39,11 @@ function AppLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto bg-slate-900">
+      <main className="flex-1 overflow-hidden bg-slate-900">
         <Routes>
           <Route path="/" element={<HistoricalData />} />
           <Route path="/signal-feed" element={<SignalFeed />} />
-          <Route path="/backtest" element={<div className="p-8">Backtest (WIP)</div>} />
+          <Route path="/backtest" element={<Backtest />} />
         </Routes>
       </main>
     </div>

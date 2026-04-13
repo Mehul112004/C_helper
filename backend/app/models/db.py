@@ -236,3 +236,131 @@ class ConfirmedSignal(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'outcome_updated_at': self.outcome_updated_at.isoformat() if self.outcome_updated_at else None,
         }
+
+
+class BacktestRun(db.Model):
+    """
+    Stores the configuration and summary metrics for each backtest execution.
+    Equity curve is stored as a JSON array of {time, value} dicts.
+    """
+    __tablename__ = 'backtest_runs'
+
+    id = db.Column(db.String(36), primary_key=True)
+    symbol = db.Column(db.String(50), nullable=False)
+    timeframe = db.Column(db.String(10), nullable=False)
+    strategy_names = db.Column(db.Text, nullable=False)          # JSON array
+    start_date = db.Column(db.DateTime(timezone=True), nullable=False)
+    end_date = db.Column(db.DateTime(timezone=True), nullable=False)
+    initial_capital = db.Column(db.Float, nullable=False)
+    risk_per_trade = db.Column(db.Float, nullable=False)         # fraction, e.g. 0.01
+
+    # Summary metrics (populated after run completes)
+    total_trades = db.Column(db.Integer, default=0)
+    win_rate = db.Column(db.Float)
+    total_pnl = db.Column(db.Float)
+    total_pnl_pct = db.Column(db.Float)
+    sharpe_ratio = db.Column(db.Float)
+    sortino_ratio = db.Column(db.Float)
+    max_drawdown = db.Column(db.Float)
+    max_drawdown_pct = db.Column(db.Float)
+    avg_rr = db.Column(db.Float)
+    profit_factor = db.Column(db.Float)
+    avg_trade_duration_mins = db.Column(db.Float)
+    best_trade_pnl = db.Column(db.Float)
+    worst_trade_pnl = db.Column(db.Float)
+
+    status = db.Column(db.String(20), default='RUNNING')         # RUNNING / COMPLETED / FAILED
+    error_message = db.Column(db.Text, nullable=True)
+    equity_curve = db.Column(db.Text, nullable=True)             # JSON array of {time, value}
+
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    completed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    trades = db.relationship('BacktestTrade', backref='run', lazy='dynamic',
+                             cascade='all, delete-orphan')
+
+    def to_dict(self):
+        import json
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'strategy_names': json.loads(self.strategy_names) if self.strategy_names else [],
+            'start_date': self.start_date.isoformat() if self.start_date else None,
+            'end_date': self.end_date.isoformat() if self.end_date else None,
+            'initial_capital': self.initial_capital,
+            'risk_per_trade': self.risk_per_trade,
+            'total_trades': self.total_trades,
+            'win_rate': self.win_rate,
+            'total_pnl': self.total_pnl,
+            'total_pnl_pct': self.total_pnl_pct,
+            'sharpe_ratio': self.sharpe_ratio,
+            'sortino_ratio': self.sortino_ratio,
+            'max_drawdown': self.max_drawdown,
+            'max_drawdown_pct': self.max_drawdown_pct,
+            'avg_rr': self.avg_rr,
+            'profit_factor': self.profit_factor,
+            'avg_trade_duration_mins': self.avg_trade_duration_mins,
+            'best_trade_pnl': self.best_trade_pnl,
+            'worst_trade_pnl': self.worst_trade_pnl,
+            'status': self.status,
+            'error_message': self.error_message,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+class BacktestTrade(db.Model):
+    """
+    Individual trade records for a backtest run.
+    Each trade has entry/exit prices, SL/TP levels, outcome, PnL, and duration.
+    """
+    __tablename__ = 'backtest_trades'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    run_id = db.Column(db.String(36), db.ForeignKey('backtest_runs.id'), nullable=False, index=True)
+
+    trade_number = db.Column(db.Integer, nullable=False)
+    entry_time = db.Column(db.DateTime(timezone=True), nullable=False)
+    exit_time = db.Column(db.DateTime(timezone=True))
+    symbol = db.Column(db.String(50), nullable=False)
+    timeframe = db.Column(db.String(10), nullable=False)
+    direction = db.Column(db.String(10), nullable=False)         # LONG / SHORT
+    strategy_name = db.Column(db.String(100), nullable=False)
+    confidence = db.Column(db.Float)
+
+    entry_price = db.Column(db.Float, nullable=False)
+    sl_price = db.Column(db.Float, nullable=False)
+    tp1_price = db.Column(db.Float, nullable=False)
+    tp2_price = db.Column(db.Float, nullable=False)
+    exit_price = db.Column(db.Float)
+
+    outcome = db.Column(db.String(20))                           # HIT_TP1 / HIT_TP2 / HIT_SL / EXPIRED
+    pnl = db.Column(db.Float)
+    pnl_pct = db.Column(db.Float)
+    rr_ratio = db.Column(db.Float)
+    duration_mins = db.Column(db.Float)
+    notes = db.Column(db.Text, default='')
+
+    def to_dict(self):
+        return {
+            'trade_number': self.trade_number,
+            'entry_time': self.entry_time.isoformat() if self.entry_time else None,
+            'exit_time': self.exit_time.isoformat() if self.exit_time else None,
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'direction': self.direction,
+            'strategy_name': self.strategy_name,
+            'confidence': self.confidence,
+            'entry_price': self.entry_price,
+            'sl_price': self.sl_price,
+            'tp1_price': self.tp1_price,
+            'tp2_price': self.tp2_price,
+            'exit_price': self.exit_price,
+            'outcome': self.outcome,
+            'pnl': self.pnl,
+            'pnl_pct': self.pnl_pct,
+            'rr_ratio': self.rr_ratio,
+            'duration_mins': self.duration_mins,
+            'notes': self.notes,
+        }

@@ -9,6 +9,7 @@ from app.blueprints.indicators_bp import indicators_bp
 from app.blueprints.sr_zones_bp import sr_zones_bp
 from app.blueprints.strategies_bp import strategies_bp
 from app.blueprints.signals_bp import signals_bp
+from app.blueprints.backtest_bp import backtest_bp
 
 def create_app(test_config=None):
     app = Flask(__name__)
@@ -30,6 +31,7 @@ def create_app(test_config=None):
     app.register_blueprint(sr_zones_bp, url_prefix='/api/sr-zones')
     app.register_blueprint(strategies_bp, url_prefix='/api/strategies')
     app.register_blueprint(signals_bp, url_prefix='/api/signals')
+    app.register_blueprint(backtest_bp, url_prefix='/api/backtest')
 
     with app.app_context():
         # Create tables

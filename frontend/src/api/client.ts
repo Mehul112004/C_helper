@@ -173,3 +173,26 @@ export const fetchWatchingSetup = async (setupId: string): Promise<WatchingSetup
   const { data } = await apiClient.get(`/signals/watching/${setupId}`);
   return data.setup;
 };
+
+// ---------- Phase 7: Backtesting ----------
+
+import type { BacktestConfig, BacktestResult, BacktestRunSummary } from '../types/backtest';
+
+export const runBacktest = async (config: BacktestConfig): Promise<BacktestResult> => {
+  const { data } = await apiClient.post('/backtest/run', config);
+  return data;
+};
+
+export const fetchBacktestHistory = async (): Promise<BacktestRunSummary[]> => {
+  const { data } = await apiClient.get('/backtest/history');
+  return data.runs;
+};
+
+export const fetchBacktestRun = async (runId: string): Promise<{ run: BacktestRunSummary; trades: BacktestResult['trades']; equity_curve: BacktestResult['equity_curve'] }> => {
+  const { data } = await apiClient.get(`/backtest/${runId}`);
+  return data;
+};
+
+export const getBacktestExportUrl = (runId: string): string => {
+  return `http://localhost:5001/api/backtest/${runId}/export`;
+};
