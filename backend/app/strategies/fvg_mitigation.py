@@ -10,10 +10,10 @@ from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 
 class FVGMitigationStrategy(BaseStrategy):
     name = "FVG Mitigation"
-    description = "Trades the mitigation of Fair Value Gaps (Imbalances) with RSI confluence"
+    description = "Trades the mitigation of Fair Value Gaps (Imbalances) with confluence"
     timeframes = ["15m", "1h", "4h"]
-    version = "1.0"
-    min_confidence = 0.65
+    version = "1.1"
+    min_confidence = 0.55
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones):
         if len(candles) < 15:
@@ -27,6 +27,8 @@ class FVGMitigationStrategy(BaseStrategy):
         
         # Look for Bullish FVG in the last 10 candles
         for i in range(len(candles) - 10, len(candles) - 1):
+            if i < 2:
+                continue
             c1 = candles[i-2]
             # c2 = candles[i-1] # The impulse candle
             c3 = candles[i]
@@ -39,10 +41,20 @@ class FVGMitigationStrategy(BaseStrategy):
                 # Check if current price is inside the FVG (mitigating it)
                 if fvg_bottom <= current_candle.low <= fvg_top or fvg_bottom <= current_candle.close <= fvg_top:
                     # We are in the gap. Do we have a bullish reversal sign?
-                    if current_candle.is_bullish and indicators.rsi_14 and indicators.rsi_14 < 45:
-                        confidence = 0.70
+                    if current_candle.is_bullish:
+                        confidence = 0.60
+                        
+                        # +0.10 if RSI below 50 (not overbought, room to grow)
+                        if indicators.rsi_14 and indicators.rsi_14 < 50:
+                            confidence += 0.10
+                        
+                        # +0.15 if strong rejection wick
                         if current_candle.lower_wick > current_candle.body_size * 1.5:
-                            confidence += 0.15 # Strong rejection wick
+                            confidence += 0.15
+                        
+                        # +0.10 if volume confirms
+                        if indicators.volume_ma_20 and current_candle.volume > indicators.volume_ma_20:
+                            confidence += 0.10
                             
                         return SetupSignal(
                             strategy_name=self.name,
@@ -51,7 +63,7 @@ class FVGMitigationStrategy(BaseStrategy):
                             direction="LONG",
                             confidence=min(confidence, 1.0),
                             entry=current_candle.close,
-                            notes=f"Bullish FVG mitigation detected from candles {c1.open_time.strftime('%H:%M')} to {c3.open_time.strftime('%H:%M')}. FVG Zone: {fvg_bottom}-{fvg_top}",
+                            notes=f"Bullish FVG mitigation detected from candles {c1.open_time.strftime('%H:%M')} to {c3.open_time.strftime('%H:%M')}. FVG Zone: {fvg_bottom:.2f}-{fvg_top:.2f}",
                         )
 
             # Bearish FVG
@@ -62,10 +74,20 @@ class FVGMitigationStrategy(BaseStrategy):
                 # Check if current price is inside the FVG (mitigating it)
                 if fvg_bottom <= current_candle.high <= fvg_top or fvg_bottom <= current_candle.close <= fvg_top:
                     # We are in the gap. Do we have a bearish reversal sign?
-                    if current_candle.is_bearish and indicators.rsi_14 and indicators.rsi_14 > 55:
-                        confidence = 0.70
+                    if current_candle.is_bearish:
+                        confidence = 0.60
+                        
+                        # +0.10 if RSI above 50 (not oversold, room to drop)
+                        if indicators.rsi_14 and indicators.rsi_14 > 50:
+                            confidence += 0.10
+                        
+                        # +0.15 if strong rejection wick
                         if current_candle.upper_wick > current_candle.body_size * 1.5:
-                            confidence += 0.15 # Strong rejection wick
+                            confidence += 0.15
+                        
+                        # +0.10 if volume confirms
+                        if indicators.volume_ma_20 and current_candle.volume > indicators.volume_ma_20:
+                            confidence += 0.10
                             
                         return SetupSignal(
                             strategy_name=self.name,
@@ -74,7 +96,7 @@ class FVGMitigationStrategy(BaseStrategy):
                             direction="SHORT",
                             confidence=min(confidence, 1.0),
                             entry=current_candle.close,
-                            notes=f"Bearish FVG mitigation detected from candles {c1.open_time.strftime('%H:%M')} to {c3.open_time.strftime('%H:%M')}. FVG Zone: {fvg_bottom}-{fvg_top}",
+                            notes=f"Bearish FVG mitigation detected from candles {c1.open_time.strftime('%H:%M')} to {c3.open_time.strftime('%H:%M')}. FVG Zone: {fvg_bottom:.2f}-{fvg_top:.2f}",
                         )
 
         return None

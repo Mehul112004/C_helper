@@ -53,32 +53,46 @@ class LLMQueueManager:
         logger.info(f"Enqueued signal for {signal.symbol} / {signal.strategy_name}. Queue size: {self._q.qsize()}")
 
     def _run_worker(self):
+        MAX_RETRIES = 3
+        RETRY_DELAYS = [15, 30, 60]  # Increasing backoff
+
         while not self._stop_event.is_set():
             try:
                 # Block for up to 1 second
                 item = self._q.get(timeout=1)
                 if item is None:
                     continue  # Stop signal injected
-                    
-                watching_setup_id, signal, candles, indicators, sr_zones = item
-                
+
+                # Items can be 5-tuple (new) or 6-tuple (with retry count)
+                if len(item) == 5:
+                    watching_setup_id, signal, candles, indicators, sr_zones = item
+                    retry_count = 0
+                else:
+                    watching_setup_id, signal, candles, indicators, sr_zones, retry_count = item
+
                 # Check LM Studio connectivity
                 if not LLMClient.ping_status():
-                    logger.warning("LM Studio is unreachable. Backing off for 60 seconds and requeuing signal.")
-                    time.sleep(60) # Backoff
-                    # Requeue it
-                    self._q.put(item)
+                    logger.warning("LM Studio is unreachable. Backing off 30s and requeuing.")
+                    time.sleep(30)
+                    self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, retry_count))
                     continue
                 
-                logger.info(f"Processing LLM evaluation for {signal.symbol} - {signal.strategy_name}")
+                logger.info(f"Processing LLM evaluation for {signal.symbol} - {signal.strategy_name} "
+                            f"(attempt {retry_count + 1}/{MAX_RETRIES + 1})")
                 verdict_data = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones)
                 
                 if verdict_data:
                     self._handle_verdict(watching_setup_id, signal, verdict_data)
                 else:
-                    logger.warning("LLM returned no valid verdict. Requeuing after short delay.")
-                    time.sleep(10)
-                    self._q.put(item)
+                    if retry_count < MAX_RETRIES:
+                        delay = RETRY_DELAYS[min(retry_count, len(RETRY_DELAYS) - 1)]
+                        logger.warning(f"LLM returned no valid verdict. Retry {retry_count + 1}/{MAX_RETRIES} "
+                                       f"after {delay}s delay.")
+                        time.sleep(delay)
+                        self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, retry_count + 1))
+                    else:
+                        logger.error(f"LLM failed after {MAX_RETRIES + 1} attempts for "
+                                     f"{signal.symbol}/{signal.strategy_name}. Dropping signal.")
                     
             except queue.Empty:
                 continue

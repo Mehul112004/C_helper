@@ -1,6 +1,6 @@
 """
 EMA Crossover Strategy
-Reactive strategy on 15m, 1h, 4h.
+Reactive strategy on 5m, 15m, 1h, 4h.
 
 LONG: EMA 9 crosses above EMA 21 with close > EMA 50 (trend filter)
 SHORT: EMA 9 crosses below EMA 21 with close < EMA 50 (trend filter)
@@ -12,8 +12,8 @@ from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 class EMACrossoverStrategy(BaseStrategy):
     name = "EMA Crossover"
     description = "EMA 9 crosses EMA 21 with EMA 50 trend filter"
-    timeframes = ["15m", "1h", "4h"]
-    version = "1.0"
+    timeframes = ["5m", "15m", "1h", "4h"]
+    version = "1.1"
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones):
         # Guard: need previous bar EMA values for crossover detection

@@ -1,6 +1,6 @@
 """
 MACD Momentum Strategy
-Reactive strategy on 1h, 4h, 1D.
+Reactive strategy on 15m, 1h, 4h, 1d.
 
 LONG: MACD line crosses above signal line with histogram turning positive.
       Stronger if histogram was negative for ≥2 bars before (momentum buildup).
@@ -13,8 +13,8 @@ from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 class MACDMomentumStrategy(BaseStrategy):
     name = "MACD Momentum"
     description = "MACD/signal cross with histogram confirmation"
-    timeframes = ["1h", "4h", "1D"]
-    version = "1.0"
+    timeframes = ["15m", "1h", "4h", "1d"]
+    version = "1.1"
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones):
         # Guard: need current and previous MACD values

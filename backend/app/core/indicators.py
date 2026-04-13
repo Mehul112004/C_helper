@@ -208,11 +208,13 @@ class IndicatorService:
         timestamps = df['open_time'].dt.strftime('%Y-%m-%dT%H:%M:%SZ').tolist()
 
         def _series_to_list(series: pd.Series) -> list:
-            """Convert a pandas Series to a list of {time, value} dicts, skipping NaN."""
+            """Convert a pandas Series to a list of {time, value} dicts, preserving index alignment."""
             result = []
             for i, val in enumerate(series):
                 if pd.notna(val):
                     result.append({'time': timestamps[i], 'value': round(float(val), 6)})
+                else:
+                    result.append({'time': timestamps[i], 'value': None})
             return result
 
         series_data = {
@@ -227,6 +229,7 @@ class IndicatorService:
             'bb_upper': _series_to_list(bb['bb_upper']),
             'bb_middle': _series_to_list(bb['bb_middle']),
             'bb_lower': _series_to_list(bb['bb_lower']),
+            'bb_width': _series_to_list(bb['bb_width']),
             'atr_14': _series_to_list(atr_14),
             'volume_ma_20': _series_to_list(vol_ma_20),
         }

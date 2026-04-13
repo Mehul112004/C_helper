@@ -5,14 +5,14 @@ import logging
 from typing import Tuple
 
 from app.core.telegram_client import telegram_client
-from app.core.telegram_formatter import format_confirmed_signal, format_outcome_update
-from app.models.db import db, ConfirmedSignal
+from app.core.telegram_formatter import format_confirmed_signal, format_outcome_update, format_watching_signal
+from app.models.db import db, ConfirmedSignal, WatchingSetup
 
 logger = logging.getLogger(__name__)
 
 # Queue payload types
 # Msg: (signal_id, alert_type, outcome_val)
-# alert_type: 'CONFIRM' or 'OUTCOME'
+# alert_type: 'CONFIRM', 'OUTCOME', or 'WATCHING'
 QueuePayload = Tuple[str, str, str | None]
 
 class TelegramDeliveryManager:
@@ -50,6 +50,9 @@ class TelegramDeliveryManager:
     def enqueue_outcome_alert(self, signal_id: str, outcome: str):
         self._q.put((signal_id, 'OUTCOME', outcome))
 
+    def enqueue_watching_alert(self, watching_setup_id: str):
+        self._q.put((watching_setup_id, 'WATCHING', None))
+
     def _run_worker(self):
         while not self._stop_event.is_set():
             try:
@@ -64,37 +67,49 @@ class TelegramDeliveryManager:
                      continue
                      
                 with self._app.app_context():
-                    signal = ConfirmedSignal.query.get(signal_id)
-                    if not signal:
-                        logger.error(f"Signal {signal_id} not found for TG delivery")
-                        continue
-                        
                     # Skip if Telegram not configured
                     if not telegram_client.is_configured():
                          continue
-                    
-                    # Prevent resending on CONFIRM
-                    if alert_type == 'CONFIRM' and signal.telegram_status == 'SENT':
-                        continue
-                        
-                    # Format text
-                    if alert_type == 'CONFIRM':
-                        text = format_confirmed_signal(signal)
-                        reply_to = None
+
+                    text = None
+                    reply_to = None
+                    signal = None
+
+                    if alert_type == 'WATCHING':
+                        signal = WatchingSetup.query.get(signal_id)
+                        if not signal:
+                            logger.error(f"WatchingSetup {signal_id} not found for TG delivery")
+                            continue
+                        text = format_watching_signal(signal)
                     else:
-                        text = format_outcome_update(signal, outcome_val)
-                        reply_to = signal.telegram_message_id
+                        signal = ConfirmedSignal.query.get(signal_id)
+                        if not signal:
+                            logger.error(f"Signal {signal_id} not found for TG delivery")
+                            continue
+                        
+                        # Prevent resending on CONFIRM
+                        if alert_type == 'CONFIRM' and signal.telegram_status == 'SENT':
+                            continue
+                            
+                        # Format text
+                        if alert_type == 'CONFIRM':
+                            text = format_confirmed_signal(signal)
+                            reply_to = None
+                        else:
+                            text = format_outcome_update(signal, outcome_val)
+                            reply_to = signal.telegram_message_id
                         
                     response = telegram_client.send_message(text, reply_to_message_id=reply_to)
                     
                     if response:
                         message_id = str(response.get("result", {}).get("message_id"))
-                        signal.telegram_status = 'SENT'
-                        signal.telegram_retries = 0
-                        if alert_type == 'CONFIRM' and message_id != "None":
-                            signal.telegram_message_id = message_id
-                        db.session.commit()
-                        logger.info(f"Telegram notice delivered for signal {signal_id}")
+                        if alert_type in ('CONFIRM', 'OUTCOME'):
+                            signal.telegram_status = 'SENT'
+                            signal.telegram_retries = 0
+                            if alert_type == 'CONFIRM' and message_id != "None":
+                                signal.telegram_message_id = message_id
+                            db.session.commit()
+                        logger.info(f"Telegram notice delivered for signal {signal_id} (type: {alert_type})")
                     else:
                         # Fail / retry handling
                         if alert_type == 'CONFIRM': # We only implement strict retry for primary signal
@@ -109,8 +124,8 @@ class TelegramDeliveryManager:
                                 time.sleep(10)
                                 self._q.put(item)
                         else:
-                            # Don't strictly retry outcome messages as they are secondary
-                            logger.error(f"Failed to send outcome update for {signal_id}.")
+                            # Don't strictly retry outcome or watching messages as they are secondary
+                            logger.error(f"Failed to send update for {signal_id} (type: {alert_type}).")
                             
             except queue.Empty:
                 continue

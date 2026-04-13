@@ -12,10 +12,12 @@ Constraints: max 2 concurrent sessions, one symbol per session, ephemeral (in-me
 """
 
 import json
+import logging
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from app.core.base_strategy import Candle
@@ -23,7 +25,19 @@ from app.core.sse import sse_manager
 from app.core.strategy_runner import StrategyRunner
 from app.core.watching import WatchingManager
 from app.core.outcome_tracker import outcome_tracker
-from app.utils.binance import BinanceStreamManager
+from app.utils.binance import BinanceStreamManager, fetch_klines
+
+logger = logging.getLogger(__name__)
+
+# Timeframe → duration in minutes (for backfill calculations)
+TIMEFRAME_MINUTES = {
+    '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+    '1h': 60, '2h': 120, '4h': 240, '6h': 360, '8h': 480,
+    '12h': 720, '1d': 1440, '3d': 4320, '1w': 10080,
+}
+
+# Minimum candles needed for indicator warm-up (EMA 200 + buffer)
+MIN_BACKFILL_CANDLES = 250
 
 
 MAX_SESSIONS = 2
@@ -80,9 +94,14 @@ class LiveScanner:
         """
         Start a new analysis session.
 
+        Includes cold start protection:
+        - Backfills historical candle data via REST API if insufficient in DB
+        - Generates S/R zones on-demand if none exist for the symbol
+
         Args:
             symbol: Trading pair (e.g. "BTCUSDT")
             strategy_names: List of strategy names to activate
+            selected_timeframes: Optional list of timeframes to restrict to
 
         Returns:
             Session dict with session_id and metadata
@@ -143,19 +162,21 @@ class LiveScanner:
             )
             self._sessions[session_id] = session
 
-        # Persist session record to DB
+        # --- Cold Start Protection (runs before WebSocket connects) ---
         if self._app:
             with self._app.app_context():
                 self._persist_session(session)
+                self._backfill_historical_data(symbol, timeframes)
+                self._ensure_sr_zones(symbol, timeframes)
 
-        # Start the WebSocket stream
+        # Start the WebSocket stream (AFTER backfill is done)
         stream.start()
 
         # Publish SSE event
         session_dict = session.to_dict()
         sse_manager.publish("session_started", session_dict)
-        print(f"[LiveScanner] Session started: {session_id} for {symbol} "
-              f"with {strategy_names} on {timeframes}")
+        logger.info(f"[LiveScanner] Session started: {session_id} for {symbol} "
+                     f"with {strategy_names} on {timeframes}")
 
         return session_dict
 
@@ -226,6 +247,9 @@ class LiveScanner:
 
         with self._app.app_context():
             try:
+                print(f"[LiveScanner] ── Candle close: {symbol}/{timeframe} "
+                      f"close={candle_data['close']:.2f} vol={candle_data['volume']:.2f}")
+
                 # 1. Upsert the closed candle into DB
                 self._upsert_candle(candle_data)
 
@@ -236,6 +260,7 @@ class LiveScanner:
                 # 3. Compute fresh indicators
                 indicator_result = IndicatorService.compute_all(symbol, timeframe, include_series=True)
                 if not indicator_result.get('latest'):
+                    print(f"[LiveScanner]    ⚠ No indicator data for {symbol}/{timeframe}")
                     return
 
                 # 4. Fetch S/R zones near current price
@@ -259,6 +284,8 @@ class LiveScanner:
                     .all()
                 )
                 if len(db_candles) < 10:
+                    print(f"[LiveScanner]    ⚠ Only {len(db_candles)} candles in DB for "
+                          f"{symbol}/{timeframe} (need ≥10)")
                     return
 
                 candle_objects = [Candle.from_db_row(c.to_dict()) for c in reversed(db_candles)]
@@ -269,13 +296,38 @@ class LiveScanner:
                 if candle_count > 0 and series:
                     indicators = StrategyRunner.prepare_indicators_snapshot(series, candle_count - 1)
                 else:
+                    print(f"[LiveScanner]    ⚠ No series data (candle_count={candle_count})")
                     return
+
+                # Debug: log indicator availability
+                ind_status = []
+                if indicators.rsi_14 is not None:
+                    ind_status.append(f"RSI={indicators.rsi_14:.1f}")
+                else:
+                    ind_status.append("RSI=None")
+                if indicators.atr_14 is not None:
+                    ind_status.append(f"ATR={indicators.atr_14:.4f}")
+                else:
+                    ind_status.append("ATR=None")
+                if indicators.bb_width is not None:
+                    ind_status.append(f"BBW={indicators.bb_width:.6f}")
+                else:
+                    ind_status.append("BBW=None")
+                if indicators.volume_ma_20 is not None:
+                    ind_status.append(f"VolMA={indicators.volume_ma_20:.0f}")
+                else:
+                    ind_status.append("VolMA=None")
+                print(f"[LiveScanner]    Indicators ({candle_count} candles): {', '.join(ind_status)}")
+                print(f"[LiveScanner]    S/R zones in range: {len(sr_zones)}")
 
                 # 6. Run strategies
                 from app.core.strategy_loader import registry
+                signals_found = 0
                 for strat_name in session.strategy_names:
                     strategy = registry.get_by_name(strat_name)
-                    if not strategy or timeframe not in strategy.timeframes:
+                    if not strategy:
+                        continue
+                    if timeframe not in strategy.timeframes:
                         continue
 
                     signal = StrategyRunner.run_single_scan(
@@ -288,11 +340,17 @@ class LiveScanner:
                     )
 
                     if signal:
+                        signals_found += 1
+                        print(f"[LiveScanner]    ✅ SIGNAL: {strat_name} → {signal.direction} "
+                              f"conf={signal.confidence:.2f}")
                         setup_dict, is_new = WatchingManager.create_or_update_setup(session_id, signal)
                         event_type = "setup_detected" if is_new else "setup_updated"
                         sse_manager.publish(event_type, setup_dict)
 
                         if is_new:
+                            from app.core.telegram_queue import telegram_queue
+                            telegram_queue.enqueue_watching_alert(setup_dict['id'])
+                            
                             from app.core.llm_queue import llm_queue
                             if hasattr(strategy, 'should_confirm_with_llm') and strategy.should_confirm_with_llm(signal):
                                 llm_queue.enqueue_signal(
@@ -302,6 +360,11 @@ class LiveScanner:
                                     indicators=indicators,
                                     sr_zones=sr_zones
                                 )
+
+                if signals_found == 0:
+                    strats_checked = [s for s in session.strategy_names
+                                      if registry.get_by_name(s) and timeframe in registry.get_by_name(s).timeframes]
+                    print(f"[LiveScanner]    ── No signals from {len(strats_checked)} strategies on {timeframe}")
 
                 # 7. Tick expiry on existing setups
                 expired = WatchingManager.tick_candle_close(session_id, symbol, timeframe)
@@ -317,7 +380,9 @@ class LiveScanner:
                 })
 
             except Exception as e:
+                import traceback
                 print(f"[LiveScanner] Error in candle close handler: {e}")
+                traceback.print_exc()
 
     def _on_price_update(self, session_id: str, symbol: str, price: float, timestamp):
         """Handle live price tick from unclosed candle."""
@@ -337,6 +402,84 @@ class LiveScanner:
             "price": price,
             "timestamp": timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
         })
+
+    def _backfill_historical_data(self, symbol: str, timeframes: list[str]):
+        """
+        Pre-flight data backfill: fetch historical candles via Binance REST API
+        for any timeframe that has fewer than MIN_BACKFILL_CANDLES in the DB.
+
+        This ensures indicators (EMA 200, RSI, etc.) have enough warm-up data
+        to produce valid non-NaN values from the very first candle close.
+        """
+        from app.models.db import Candle as CandleModel
+
+        for tf in timeframes:
+            existing_count = CandleModel.query.filter_by(
+                symbol=symbol, timeframe=tf
+            ).count()
+
+            if existing_count >= MIN_BACKFILL_CANDLES:
+                logger.info(f"[LiveScanner] Backfill skip: {symbol}/{tf} already has "
+                            f"{existing_count} candles (≥{MIN_BACKFILL_CANDLES})")
+                continue
+
+            needed = MIN_BACKFILL_CANDLES - existing_count
+            logger.info(f"[LiveScanner] Backfilling {symbol}/{tf}: have {existing_count}, "
+                        f"fetching ~{MIN_BACKFILL_CANDLES} candles via REST API...")
+
+            try:
+                # Calculate how far back to fetch
+                tf_minutes = TIMEFRAME_MINUTES.get(tf, 60)
+                # Fetch extra to account for gaps/weekends
+                lookback_minutes = MIN_BACKFILL_CANDLES * tf_minutes * 1.2
+                now_ms = int(time.time() * 1000)
+                start_ms = now_ms - int(lookback_minutes * 60 * 1000)
+
+                candles = fetch_klines(symbol, tf, start_ms, now_ms)
+
+                if not candles:
+                    logger.warning(f"[LiveScanner] No historical data returned for {symbol}/{tf}")
+                    continue
+
+                # Bulk upsert the fetched candles
+                upserted = 0
+                for candle_data in candles:
+                    self._upsert_candle(candle_data)
+                    upserted += 1
+
+                logger.info(f"[LiveScanner] ✅ Backfill complete: {symbol}/{tf} — "
+                            f"upserted {upserted} candles")
+
+            except Exception as e:
+                logger.error(f"[LiveScanner] Backfill failed for {symbol}/{tf}: {e}")
+                # Don't abort session — partial data is better than none
+
+    def _ensure_sr_zones(self, symbol: str, timeframes: list[str]):
+        """
+        On-demand S/R zone generation: if no zones exist for a symbol/timeframe,
+        trigger SREngine.full_refresh() synchronously so S/R-based strategies
+        work immediately instead of waiting for the 4-hour scheduler.
+        """
+        from app.models.db import SRZone
+        from app.core.sr_engine import SREngine
+
+        # Check if ANY zones exist for this symbol (across all timeframes)
+        has_any_zones = SRZone.query.filter_by(symbol=symbol).first()
+
+        if has_any_zones:
+            logger.info(f"[LiveScanner] S/R zones exist for {symbol}, skipping on-demand generation")
+            return
+
+        logger.info(f"[LiveScanner] No S/R zones found for {symbol}. Generating now...")
+
+        # Generate zones for each timeframe that has enough data
+        for tf in timeframes:
+            try:
+                SREngine.full_refresh(symbol, tf)
+                zone_count = SRZone.query.filter_by(symbol=symbol, timeframe=tf).count()
+                logger.info(f"[LiveScanner] ✅ Generated {zone_count} S/R zones for {symbol}/{tf}")
+            except Exception as e:
+                logger.error(f"[LiveScanner] S/R zone generation failed for {symbol}/{tf}: {e}")
 
     def _upsert_candle(self, candle_data: dict):
         """Upsert a closed candle into the database."""

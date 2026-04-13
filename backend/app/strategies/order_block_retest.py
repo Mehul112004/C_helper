@@ -12,8 +12,8 @@ class OrderBlockRetestStrategy(BaseStrategy):
     name = "Order Block Retest"
     description = "Detects retracements into historical institutional Order Blocks with rejection."
     timeframes = ["1h", "4h", "1d"]
-    version = "1.0"
-    min_confidence = 0.70
+    version = "1.1"
+    min_confidence = 0.60
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones):
         if len(candles) < 20:
@@ -22,53 +22,78 @@ class OrderBlockRetestStrategy(BaseStrategy):
         current_candle = candles[-1]
         
         # Look back to find a valid order block (OB) created in the past 15 candles
-        # An OB is followed by a strong impulse (e.g., 3 candles heavily moving in one direction)
-        for i in range(len(candles) - 15, len(candles) - 4):
+        # An OB is followed by a strong impulse (e.g., 2+ candles heavily moving in one direction)
+        for i in range(len(candles) - 15, len(candles) - 3):
+            if i < 0:
+                continue
+                
             # Check for Bullish OB: A bearish candle followed by a strong bullish impulse
             if candles[i].is_bearish:
-                # Check next 3 candles for strong bullish impulse
-                if all(candles[i+j].is_bullish for j in range(1, 4)):
-                    impulse_size = candles[i+3].close - candles[i+1].open
-                    avg_body = sum(c.body_size for c in candles[i+1:i+4]) / 3
+                # Check next 2 candles for strong bullish impulse (relaxed from 3)
+                impulse_candles = candles[i+1:i+3]
+                if len(impulse_candles) >= 2 and all(c.is_bullish for c in impulse_candles):
+                    impulse_size = impulse_candles[-1].close - impulse_candles[0].open
+                    avg_body = sum(c.body_size for c in impulse_candles) / len(impulse_candles)
                     
-                    if impulse_size > avg_body * 2:
+                    if impulse_size > avg_body * 1.5:  # Relaxed from 2x
                         ob_high = candles[i].high
                         ob_low = candles[i].low
                         
                         # Verify price has retraced to the OB
                         if ob_low <= current_candle.low <= ob_high or ob_low <= current_candle.close <= ob_high:
-                            # Rejection condition
-                            if current_candle.lower_wick > current_candle.body_size and indicators.rsi_14 and indicators.rsi_14 < 50:
+                            # Rejection condition: lower wick shows buying pressure
+                            if current_candle.lower_wick > current_candle.body_size * 0.8:
+                                confidence = 0.65
+                                
+                                # +0.10 if RSI supports (not overbought)
+                                if indicators.rsi_14 and indicators.rsi_14 < 55:
+                                    confidence += 0.10
+                                
+                                # +0.10 if volume confirms
+                                if indicators.volume_ma_20 and current_candle.volume > indicators.volume_ma_20:
+                                    confidence += 0.10
+                                
                                 return SetupSignal(
                                     strategy_name=self.name,
                                     symbol=symbol,
                                     timeframe=timeframe,
                                     direction="LONG",
-                                    confidence=0.75,
+                                    confidence=min(confidence, 1.0),
                                     entry=current_candle.close,
                                     notes=f"Bullish Order Block retest at zone {ob_low:.2f}-{ob_high:.2f}. Originated at {candles[i].open_time.strftime('%Y-%m-%d %H:%M')}.",
                                 )
 
             # Check for Bearish OB: A bullish candle followed by a strong bearish impulse
             if candles[i].is_bullish:
-                if all(candles[i+j].is_bearish for j in range(1, 4)):
-                    impulse_size = candles[i+1].open - candles[i+3].close
-                    avg_body = sum(c.body_size for c in candles[i+1:i+4]) / 3
+                impulse_candles = candles[i+1:i+3]
+                if len(impulse_candles) >= 2 and all(c.is_bearish for c in impulse_candles):
+                    impulse_size = impulse_candles[0].open - impulse_candles[-1].close
+                    avg_body = sum(c.body_size for c in impulse_candles) / len(impulse_candles)
                     
-                    if impulse_size > avg_body * 2:
+                    if impulse_size > avg_body * 1.5:  # Relaxed from 2x
                         ob_high = candles[i].high
                         ob_low = candles[i].low
                         
                         # Verify price has retraced to the OB
                         if ob_low <= current_candle.high <= ob_high or ob_low <= current_candle.close <= ob_high:
-                            # Rejection condition
-                            if current_candle.upper_wick > current_candle.body_size and indicators.rsi_14 and indicators.rsi_14 > 50:
+                            # Rejection condition: upper wick shows selling pressure
+                            if current_candle.upper_wick > current_candle.body_size * 0.8:
+                                confidence = 0.65
+                                
+                                # +0.10 if RSI supports (not oversold)
+                                if indicators.rsi_14 and indicators.rsi_14 > 45:
+                                    confidence += 0.10
+                                
+                                # +0.10 if volume confirms
+                                if indicators.volume_ma_20 and current_candle.volume > indicators.volume_ma_20:
+                                    confidence += 0.10
+                                
                                 return SetupSignal(
                                     strategy_name=self.name,
                                     symbol=symbol,
                                     timeframe=timeframe,
                                     direction="SHORT",
-                                    confidence=0.75,
+                                    confidence=min(confidence, 1.0),
                                     entry=current_candle.close,
                                     notes=f"Bearish Order Block retest at zone {ob_low:.2f}-{ob_high:.2f}. Originated at {candles[i].open_time.strftime('%Y-%m-%d %H:%M')}.",
                                 )

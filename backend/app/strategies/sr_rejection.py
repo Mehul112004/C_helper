@@ -1,6 +1,6 @@
 """
 S/R Zone Rejection Strategy
-Conditional strategy on 4h, 1D.
+Conditional strategy on 1h, 4h, 1d.
 
 Looks for price approaching a support/resistance zone and producing a rejection
 candle pattern (pin bar / hammer / shooting star).
@@ -15,8 +15,8 @@ from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 class SRRejectionStrategy(BaseStrategy):
     name = "S/R Zone Rejection"
     description = "Price approaches key zone, waits for rejection candle"
-    timeframes = ["4h", "1D"]
-    version = "1.0"
+    timeframes = ["1h", "4h", "1d"]
+    version = "1.1"
 
     # Minimum zone strength to consider
     MIN_ZONE_STRENGTH = 0.3

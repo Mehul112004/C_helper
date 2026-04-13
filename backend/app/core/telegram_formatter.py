@@ -47,6 +47,42 @@ def format_confirmed_signal(signal: ConfirmedSignal) -> str:
     return msg.strip()
 
 
+def format_watching_signal(setup) -> str:
+    """
+    Format an unconfirmed watching setup into a structured Telegram message.
+    """
+    direction_badge = "👀 🟢" if setup.direction == "LONG" else "👀 🔴"
+    
+    if setup.detected_at:
+        dt = setup.detected_at
+        if isinstance(dt, str):
+            from datetime import datetime
+            dt = datetime.fromisoformat(dt)
+        time_str = dt.strftime("%d %b %Y %H:%M UTC")
+    else:
+        from datetime import datetime
+        time_str = datetime.utcnow().strftime("%d %b %Y %H:%M UTC")
+        
+    notes = setup.notes.strip() if hasattr(setup, 'notes') and setup.notes else ""
+    
+    msg = f"""
+{direction_badge} WATCHING SCAN (Not Confirmed)
+
+*Pair*      : {setup.symbol}
+*Direction* : {setup.direction}
+*Timeframe* : {setup.timeframe}
+*Strategy*  : {setup.strategy_name}
+*Confidence*: {setup.confidence * 100:.0f}%
+
+*Notes*     : 
+{notes}
+
+*Status*    : PENDING LLM CONFIRMATION...
+⏱ {time_str}
+"""
+    return msg.strip()
+
+
 def format_outcome_update(signal: ConfirmedSignal, outcome: str) -> str:
     """
     Format a simple outcome follow-up message when TP1, TP2 or SL is hit.

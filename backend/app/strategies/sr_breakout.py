@@ -1,6 +1,6 @@
 """
 S/R Zone Breakout Strategy
-Conditional strategy on 1h, 4h.
+Conditional strategy on 15m, 1h, 4h.
 
 Detects price breaking through an S/R zone with conviction (strong body + volume).
 LONG: Close breaks above resistance zone with strong body and volume
@@ -13,17 +13,14 @@ from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 class SRBreakoutStrategy(BaseStrategy):
     name = "S/R Zone Breakout"
     description = "Price breaks and retests a key zone"
-    timeframes = ["1h", "4h"]
-    version = "1.0"
+    timeframes = ["15m", "1h", "4h"]
+    version = "1.1"
 
     # Minimum zone strength for breakout
     MIN_ZONE_STRENGTH = 0.25
 
     # Minimum body-to-range ratio for a "strong" breakout candle
     MIN_BODY_RATIO = 0.50
-
-    # Volume multiplier for breakout confirmation
-    VOLUME_THRESHOLD = 1.3
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones):
         if not sr_zones or not candles or len(candles) < 3:
@@ -39,12 +36,6 @@ class SRBreakoutStrategy(BaseStrategy):
 
         # Must be a strong-bodied candle (not a doji or indecision)
         if body_ratio < self.MIN_BODY_RATIO:
-            return None
-
-        # Volume confirmation
-        if indicators.volume_ma_20 is None:
-            return None
-        if candle.volume < indicators.volume_ma_20 * self.VOLUME_THRESHOLD:
             return None
 
         close = candle.close
@@ -97,9 +88,13 @@ class SRBreakoutStrategy(BaseStrategy):
         # Confidence scoring
         confidence = 0.55
 
-        # +0.15 if strong volume (>1.5× vol_ma)
+        # +0.10 if volume above average
+        if indicators.volume_ma_20 and candles[-1].volume > indicators.volume_ma_20:
+            confidence += 0.10
+
+        # +0.10 if strong volume (>1.5× vol_ma)
         if indicators.volume_ma_20 and candles[-1].volume > indicators.volume_ma_20 * 1.5:
-            confidence += 0.15
+            confidence += 0.10
 
         # +0.10 if EMA trend aligns
         if indicators.ema_50 is not None:
