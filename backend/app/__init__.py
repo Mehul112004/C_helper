@@ -1,4 +1,5 @@
 import os
+import atexit
 from flask import Flask
 from flask_cors import CORS
 from sqlalchemy import text
@@ -7,14 +8,19 @@ from app.blueprints.data import data_bp
 from app.blueprints.indicators_bp import indicators_bp
 from app.blueprints.sr_zones_bp import sr_zones_bp
 from app.blueprints.strategies_bp import strategies_bp
+from app.blueprints.signals_bp import signals_bp
 
-def create_app():
+def create_app(test_config=None):
     app = Flask(__name__)
     CORS(app)
     
     # Configure Database
     app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'postgresql://postgres:password@localhost:5432/signals_db')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+    # Apply test overrides
+    if test_config:
+        app.config.update(test_config)
 
     db.init_app(app)
 
@@ -23,6 +29,7 @@ def create_app():
     app.register_blueprint(indicators_bp, url_prefix='/api/indicators')
     app.register_blueprint(sr_zones_bp, url_prefix='/api/sr-zones')
     app.register_blueprint(strategies_bp, url_prefix='/api/strategies')
+    app.register_blueprint(signals_bp, url_prefix='/api/signals')
 
     with app.app_context():
         # Create tables
@@ -41,10 +48,13 @@ def create_app():
         registry.load_builtin_strategies()
         registry.sync_with_db()
 
-    # Initialize background scheduler (only in non-testing mode)
+    # Initialize background scheduler and live scanner (only in non-testing mode)
     if not app.config.get('TESTING', False):
         from app.core.scheduler import init_scheduler
         init_scheduler(app)
 
-    return app
+        from app.core.scanner import live_scanner
+        live_scanner.set_app(app)
+        atexit.register(live_scanner.stop_all)
 
+    return app

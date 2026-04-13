@@ -120,3 +120,56 @@ export const refreshSRZones = async (
   const { data } = await apiClient.post('/sr-zones/refresh', { symbol, timeframe });
   return data;
 };
+
+// ---------- Phase 3: Strategies ----------
+
+export interface StrategyInfo {
+  id: number;
+  name: string;
+  description: string;
+  strategy_type: string;
+  timeframes: string[];
+  enabled: boolean;
+  min_confidence: number;
+}
+
+export const fetchStrategies = async (): Promise<StrategyInfo[]> => {
+  const { data } = await apiClient.get('/strategies');
+  return data.strategies;
+};
+
+// ---------- Phase 4: Live Analysis ----------
+
+import type { AnalysisSession, WatchingSetup } from '../types/signals';
+
+export const fetchActiveSessions = async (): Promise<AnalysisSession[]> => {
+  const { data } = await apiClient.get('/signals/sessions');
+  return data.sessions;
+};
+
+export const startSession = async (
+  symbol: string,
+  strategyNames: string[]
+): Promise<AnalysisSession> => {
+  const { data } = await apiClient.post('/signals/sessions', {
+    symbol,
+    strategy_names: strategyNames,
+  });
+  return data.session;
+};
+
+export const stopSession = async (sessionId: string): Promise<void> => {
+  await apiClient.delete(`/signals/sessions/${sessionId}`);
+};
+
+export const fetchWatchingSetups = async (sessionId?: string): Promise<WatchingSetup[]> => {
+  const { data } = await apiClient.get('/signals/watching', {
+    params: sessionId ? { session_id: sessionId } : {},
+  });
+  return data.setups;
+};
+
+export const fetchWatchingSetup = async (setupId: string): Promise<WatchingSetup> => {
+  const { data } = await apiClient.get(`/signals/watching/${setupId}`);
+  return data.setup;
+};

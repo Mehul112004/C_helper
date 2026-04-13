@@ -99,3 +99,85 @@ class Strategy(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class WatchingSetup(db.Model):
+    """
+    Tracks detected trade setups that are being monitored (watching cards).
+    Created when a strategy fires a SetupSignal, updated on re-fire (dedup),
+    expired after N candle closes without re-confirmation.
+    """
+    __tablename__ = 'watching_setups'
+
+    id = db.Column(db.String(36), primary_key=True)                       # UUID
+    session_id = db.Column(db.String(36), nullable=False, index=True)     # Analysis session
+    symbol = db.Column(db.String(50), nullable=False)
+    timeframe = db.Column(db.String(10), nullable=False)
+    direction = db.Column(db.String(10), nullable=False)                  # LONG / SHORT
+    strategy_name = db.Column(db.String(100), nullable=False)
+    confidence = db.Column(db.Float, nullable=False)
+    entry = db.Column(db.Float)
+    sl = db.Column(db.Float)
+    tp1 = db.Column(db.Float)
+    tp2 = db.Column(db.Float)
+    notes = db.Column(db.Text, default='')
+    status = db.Column(db.String(20), default='WATCHING')                 # WATCHING / EXPIRED / CONFIRMED / REJECTED
+    candles_since_detected = db.Column(db.Integer, default=0)
+    expiry_candles = db.Column(db.Integer, default=3)                     # Configurable via env
+    detected_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    expired_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    zone_description = db.Column(db.Text, default='')                    # e.g. "Resistance at $3,420"
+    condition_description = db.Column(db.Text, default='')               # e.g. "Bearish engulfing on 1h close"
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'session_id': self.session_id,
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'direction': self.direction,
+            'strategy_name': self.strategy_name,
+            'confidence': self.confidence,
+            'entry': self.entry,
+            'sl': self.sl,
+            'tp1': self.tp1,
+            'tp2': self.tp2,
+            'notes': self.notes,
+            'status': self.status,
+            'candles_since_detected': self.candles_since_detected,
+            'expiry_candles': self.expiry_candles,
+            'detected_at': self.detected_at.isoformat() if self.detected_at else None,
+            'expired_at': self.expired_at.isoformat() if self.expired_at else None,
+            'zone_description': self.zone_description,
+            'condition_description': self.condition_description,
+        }
+
+
+class AnalysisSessionRecord(db.Model):
+    """
+    Lightweight DB record of an analysis session.
+    Sessions are ephemeral (in-memory), but persisted here
+    for SSE stream reference and watching setup foreign key context.
+    """
+    __tablename__ = 'analysis_sessions'
+
+    id = db.Column(db.String(36), primary_key=True)                       # UUID
+    symbol = db.Column(db.String(50), nullable=False)
+    strategy_names = db.Column(db.Text, nullable=False)                   # JSON array
+    timeframes = db.Column(db.Text, nullable=False)                       # JSON array
+    status = db.Column(db.String(20), default='active')                   # active / stopped
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    stopped_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    def to_dict(self):
+        import json
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'strategy_names': json.loads(self.strategy_names) if self.strategy_names else [],
+            'timeframes': json.loads(self.timeframes) if self.timeframes else [],
+            'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'stopped_at': self.stopped_at.isoformat() if self.stopped_at else None,
+        }
+

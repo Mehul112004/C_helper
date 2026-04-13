@@ -13,3 +13,4 @@ dependencies:
     - pandas
     - numpy
     - apscheduler
+    - websocket-client
