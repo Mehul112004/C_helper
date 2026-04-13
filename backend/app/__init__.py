@@ -61,5 +61,14 @@ def create_app(test_config=None):
         llm_queue.set_app(app)
         llm_queue.start()
         atexit.register(llm_queue.stop)
+        
+        from app.core.telegram_queue import telegram_queue
+        telegram_queue.set_app(app)
+        telegram_queue.start()
+        atexit.register(telegram_queue.stop)
+        
+        from app.core.outcome_tracker import outcome_tracker
+        outcome_tracker.set_app(app)
+        outcome_tracker.rebuild_cache()
 
     return app

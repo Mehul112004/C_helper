@@ -7,6 +7,8 @@ import uuid
 
 from app.core.base_strategy import SetupSignal, Candle, Indicators
 from app.core.llm_client import LLMClient
+from app.core.telegram_queue import telegram_queue
+from app.core.outcome_tracker import outcome_tracker
 from app.core.sse import sse_manager
 
 logger = logging.getLogger(__name__)
@@ -128,6 +130,12 @@ class LLMQueueManager:
                 # Emit SSE for Confirmed feed
                 sse_manager.publish('signal_confirmed', new_sig.to_dict())
                 logger.info(f"Signal for {signal.symbol} confirmed by LLM ('{v_str}') and saved to DB.")
+                
+                # Trigger Telegram Notification
+                telegram_queue.enqueue_confirm_alert(new_sig.id)
+                
+                # Add to OutcomeTracker for live price checking
+                outcome_tracker.add_to_cache(new_sig)
             
             else: # REJECT
                 db.session.commit()

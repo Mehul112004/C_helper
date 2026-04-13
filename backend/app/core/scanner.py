@@ -22,6 +22,7 @@ from app.core.base_strategy import Candle
 from app.core.sse import sse_manager
 from app.core.strategy_runner import StrategyRunner
 from app.core.watching import WatchingManager
+from app.core.outcome_tracker import outcome_tracker
 from app.utils.binance import BinanceStreamManager
 
 
@@ -321,6 +322,9 @@ class LiveScanner:
 
         session.live_price = price
         session.live_price_updated_at = timestamp
+        
+        # Check against active trade limits
+        outcome_tracker.check_price(symbol, price)
 
         sse_manager.publish("price_update", {
             "session_id": session_id,

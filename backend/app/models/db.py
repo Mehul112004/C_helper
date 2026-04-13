@@ -207,6 +207,10 @@ class ConfirmedSignal(db.Model):
     
     trade_outcome = db.Column(db.String(20), default='ACTIVE')            # ACTIVE / HIT_TP1 / HIT_TP2 / HIT_SL / EXPIRED
     
+    telegram_status = db.Column(db.String(20), default='PENDING')         # PENDING / SENT / FAILED
+    telegram_retries = db.Column(db.Integer, default=0)
+    telegram_message_id = db.Column(db.String(50), nullable=True)         # Useful for reply
+    
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
     outcome_updated_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
@@ -226,6 +230,9 @@ class ConfirmedSignal(db.Model):
             'verdict_status': self.verdict_status,
             'reasoning_text': self.reasoning_text,
             'trade_outcome': self.trade_outcome,
+            'telegram_status': self.telegram_status,
+            'telegram_retries': self.telegram_retries,
+            'telegram_message_id': self.telegram_message_id,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'outcome_updated_at': self.outcome_updated_at.isoformat() if self.outcome_updated_at else None,
         }
