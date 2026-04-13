@@ -43,6 +43,7 @@ def start_session():
     body = request.get_json(silent=True) or {}
     symbol = body.get('symbol')
     strategy_names = body.get('strategy_names', [])
+    timeframes = body.get('timeframes', None)
 
     if not symbol:
         return jsonify({'error': 'Missing required field: symbol'}), 400
@@ -51,7 +52,7 @@ def start_session():
 
     try:
         from app.core.scanner import live_scanner
-        session = live_scanner.start_session(symbol, strategy_names)
+        session = live_scanner.start_session(symbol, strategy_names, timeframes)
         return jsonify({'session': session}), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400

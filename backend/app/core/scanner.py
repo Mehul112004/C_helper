@@ -76,7 +76,7 @@ class LiveScanner:
         """Set the Flask app reference for app context in background threads."""
         self._app = app
 
-    def start_session(self, symbol: str, strategy_names: list[str]) -> dict:
+    def start_session(self, symbol: str, strategy_names: list[str], selected_timeframes: list[str] = None) -> dict:
         """
         Start a new analysis session.
 
@@ -112,12 +112,17 @@ class LiveScanner:
                 if strat is None:
                     raise ValueError(f"Unknown strategy: {name}")
                 strategies.append(strat)
-                all_timeframes.update(strat.timeframes)
+                if not selected_timeframes:
+                    all_timeframes.update(strat.timeframes)
 
             if not strategies:
                 raise ValueError("At least one strategy must be selected")
 
-            timeframes = sorted(all_timeframes)
+            if selected_timeframes:
+                timeframes = list(set(selected_timeframes))
+            else:
+                timeframes = sorted(all_timeframes)
+                
             session_id = str(uuid.uuid4())
 
             # Create the WebSocket stream manager

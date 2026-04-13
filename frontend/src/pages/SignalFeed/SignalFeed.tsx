@@ -90,9 +90,9 @@ export default function SignalFeed() {
   const { connected } = useSSE(handleSSEEvent);
 
   const handleStartSession = useCallback(
-    async (sym: string, strats: string[]) => {
+    async (sym: string, strats: string[], timeframes?: string[]) => {
       try {
-        await startSession(sym, strats);
+        await startSession(sym, strats, timeframes);
       } catch {
         // Error is handled in the hook
       }

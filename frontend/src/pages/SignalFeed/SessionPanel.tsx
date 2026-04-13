@@ -16,7 +16,7 @@ interface SessionPanelProps {
   canStartNew: boolean;
   isLoading: boolean;
   connected: boolean;
-  onStartSession: (symbol: string, strategyNames: string[]) => void;
+  onStartSession: (symbol: string, strategyNames: string[], timeframes?: string[]) => void;
   onStopSession: (sessionId: string) => void;
 }
 
@@ -36,18 +36,28 @@ export default function SessionPanel({
   const [showForm, setShowForm] = useState(false);
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
+  const [selectedTimeframes, setSelectedTimeframes] = useState<string[]>(['1h']);
+
+  const AVAILABLE_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d'];
 
   const handleStart = () => {
-    if (!symbol || selectedStrategies.length === 0) return;
-    onStartSession(symbol.toUpperCase(), selectedStrategies);
+    if (!symbol || selectedStrategies.length === 0 || selectedTimeframes.length === 0) return;
+    onStartSession(symbol.toUpperCase(), selectedStrategies, selectedTimeframes);
     setShowForm(false);
     setSymbol('BTCUSDT');
     setSelectedStrategies([]);
+    setSelectedTimeframes(['1h']);
   };
 
   const toggleStrategy = (name: string) => {
     setSelectedStrategies((prev) =>
       prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]
+    );
+  };
+
+  const toggleTimeframe = (tf: string) => {
+    setSelectedTimeframes((prev) =>
+      prev.includes(tf) ? prev.filter((t) => t !== tf) : [...prev, tf]
     );
   };
 
@@ -166,10 +176,30 @@ export default function SessionPanel({
             </div>
           </div>
 
+          {/* Timeframe Selection */}
+          <div className="mb-4">
+            <label className="text-xs text-slate-400 mb-2 block">Timeframes</label>
+            <div className="flex flex-wrap gap-2">
+              {AVAILABLE_TIMEFRAMES.map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => toggleTimeframe(tf)}
+                  className={`text-xs px-2.5 py-1 rounded-lg border transition ${
+                    selectedTimeframes.includes(tf)
+                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400'
+                      : 'bg-slate-700/50 border-slate-600/50 text-slate-400 hover:border-slate-500'
+                  }`}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Start Button */}
           <button
             onClick={handleStart}
-            disabled={!symbol || selectedStrategies.length === 0 || isLoading}
+            disabled={!symbol || selectedStrategies.length === 0 || selectedTimeframes.length === 0 || isLoading}
             className="w-full flex items-center justify-center gap-2 text-sm font-medium py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {isLoading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}

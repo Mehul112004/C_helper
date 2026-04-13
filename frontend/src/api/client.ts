@@ -149,11 +149,13 @@ export const fetchActiveSessions = async (): Promise<AnalysisSession[]> => {
 
 export const startSession = async (
   symbol: string,
-  strategyNames: string[]
+  strategyNames: string[],
+  timeframes?: string[]
 ): Promise<AnalysisSession> => {
   const { data } = await apiClient.post('/signals/sessions', {
     symbol,
     strategy_names: strategyNames,
+    timeframes,
   });
   return data.session;
 };

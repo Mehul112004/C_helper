@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Config
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 LM_STUDIO_MODEL = "qwen/qwen3.5-9b"
-REQUEST_TIMEOUT = 30  # seconds
+REQUEST_TIMEOUT = 240  # seconds
 
 class LLMVerdictSchema(BaseModel):
     verdict: str = Field(..., description="Must be exactly CONFIRM, REJECT, or MODIFY")

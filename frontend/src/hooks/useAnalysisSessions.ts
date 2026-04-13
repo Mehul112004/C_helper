@@ -5,7 +5,7 @@ import type { AnalysisSession, Strategy } from '../types/signals';
 interface UseAnalysisSessionsReturn {
   sessions: AnalysisSession[];
   strategies: Strategy[];
-  startSession: (symbol: string, strategyNames: string[]) => Promise<AnalysisSession>;
+  startSession: (symbol: string, strategyNames: string[], timeframes?: string[]) => Promise<AnalysisSession>;
   stopSession: (sessionId: string) => Promise<void>;
   isLoading: boolean;
   error: string | null;
@@ -42,13 +42,14 @@ export function useAnalysisSessions(): UseAnalysisSessionsReturn {
     fetchInitial();
   }, []);
 
-  const startSession = useCallback(async (symbol: string, strategyNames: string[]) => {
+  const startSession = useCallback(async (symbol: string, strategyNames: string[], timeframes?: string[]) => {
     setIsLoading(true);
     setError(null);
     try {
       const { data } = await apiClient.post('/signals/sessions', {
         symbol,
         strategy_names: strategyNames,
+        timeframes,
       });
       const session = data.session as AnalysisSession;
       setSessions((prev) => [...prev, session]);
