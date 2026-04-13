@@ -181,3 +181,51 @@ class AnalysisSessionRecord(db.Model):
             'stopped_at': self.stopped_at.isoformat() if self.stopped_at else None,
         }
 
+
+class ConfirmedSignal(db.Model):
+    """
+    Final trade signals that have passed the LLM confirmation pipeline.
+    Displayed on the Confirmed feed in the UI and sent to Telegram.
+    """
+    __tablename__ = 'confirmed_signals'
+
+    id = db.Column(db.String(36), primary_key=True)                       # UUID
+    watching_setup_id = db.Column(db.String(36), nullable=False)          # Link to origin setup
+    symbol = db.Column(db.String(50), nullable=False)
+    timeframe = db.Column(db.String(10), nullable=False)
+    direction = db.Column(db.String(10), nullable=False)                  # LONG / SHORT
+    strategy_name = db.Column(db.String(100), nullable=False)
+    confidence = db.Column(db.Float, nullable=False)
+    
+    entry = db.Column(db.Float, nullable=False)
+    sl = db.Column(db.Float, nullable=False)
+    tp1 = db.Column(db.Float, nullable=False)
+    tp2 = db.Column(db.Float, nullable=False)
+    
+    verdict_status = db.Column(db.String(20), nullable=False)             # CONFIRMED / MODIFIED
+    reasoning_text = db.Column(db.Text, nullable=False)
+    
+    trade_outcome = db.Column(db.String(20), default='ACTIVE')            # ACTIVE / HIT_TP1 / HIT_TP2 / HIT_SL / EXPIRED
+    
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    outcome_updated_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'watching_setup_id': self.watching_setup_id,
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'direction': self.direction,
+            'strategy_name': self.strategy_name,
+            'confidence': self.confidence,
+            'entry': self.entry,
+            'sl': self.sl,
+            'tp1': self.tp1,
+            'tp2': self.tp2,
+            'verdict_status': self.verdict_status,
+            'reasoning_text': self.reasoning_text,
+            'trade_outcome': self.trade_outcome,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'outcome_updated_at': self.outcome_updated_at.isoformat() if self.outcome_updated_at else None,
+        }

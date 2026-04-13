@@ -56,5 +56,10 @@ def create_app(test_config=None):
         from app.core.scanner import live_scanner
         live_scanner.set_app(app)
         atexit.register(live_scanner.stop_all)
+        
+        from app.core.llm_queue import llm_queue
+        llm_queue.set_app(app)
+        llm_queue.start()
+        atexit.register(llm_queue.stop)
 
     return app

@@ -95,6 +95,27 @@ def get_watching(setup_id):
     return jsonify({'setup': setup}), 200
 
 
+# ---------- Confirmed Signals ----------
+
+@signals_bp.route('/confirmed', methods=['GET'])
+def list_confirmed_signals():
+    """
+    Get all confirmed/modified signals that have passed the LLM filter.
+    """
+    from app.models.db import db, ConfirmedSignal
+    signals = ConfirmedSignal.query.order_by(ConfirmedSignal.created_at.desc()).all()
+    return jsonify({'signals': [s.to_dict() for s in signals], 'count': len(signals)}), 200
+
+@signals_bp.route('/lm-studio-status', methods=['GET'])
+def lm_studio_status():
+    """
+    Check if the local LM Studio instance is reachable.
+    """
+    from app.core.llm_client import LLMClient
+    status = LLMClient.ping_status()
+    return jsonify({'online': status}), 200
+
+
 # ---------- Server-Sent Events ----------
 
 @signals_bp.route('/stream')

@@ -286,6 +286,17 @@ class LiveScanner:
                         event_type = "setup_detected" if is_new else "setup_updated"
                         sse_manager.publish(event_type, setup_dict)
 
+                        if is_new:
+                            from app.core.llm_queue import llm_queue
+                            if hasattr(strategy, 'should_confirm_with_llm') and strategy.should_confirm_with_llm(signal):
+                                llm_queue.enqueue_signal(
+                                    watching_setup_id=setup_dict['id'],
+                                    signal=signal,
+                                    candles=candle_objects,
+                                    indicators=indicators,
+                                    sr_zones=sr_zones
+                                )
+
                 # 7. Tick expiry on existing setups
                 expired = WatchingManager.tick_candle_close(session_id, symbol, timeframe)
                 for exp in expired:
