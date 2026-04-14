@@ -35,8 +35,17 @@ class OutcomeTracker:
             with self._lock:
                 self._cache.clear()
                 for sig in active_signals:
+                    # Parse created_at explicitly as datetime
+                    dt = sig.created_at
+                    if isinstance(dt, str):
+                        dt = datetime.fromisoformat(dt)
+                    if not dt:
+                        dt = datetime.utcnow()
+                        
                     self._cache[sig.id] = {
                         'symbol': sig.symbol,
+                        'timeframe': sig.timeframe,
+                        'created_at': dt,
                         'direction': sig.direction,
                         'entry': sig.entry,
                         'sl': sig.sl,
@@ -48,8 +57,16 @@ class OutcomeTracker:
     def add_to_cache(self, signal: ConfirmedSignal):
         """Append a newly confirmed signal dynamically."""
         with self._lock:
+            dt = signal.created_at
+            if isinstance(dt, str):
+                dt = datetime.fromisoformat(dt)
+            if not dt:
+                dt = datetime.utcnow()
+                
             self._cache[signal.id] = {
                 'symbol': signal.symbol,
+                'timeframe': signal.timeframe,
+                'created_at': dt,
                 'direction': signal.direction,
                 'entry': signal.entry,
                 'sl': signal.sl,
@@ -57,12 +74,23 @@ class OutcomeTracker:
                 'tp2': signal.tp2
             }
 
+    def _parse_timeframe_mins(self, tf: str) -> int:
+        if tf.endswith('m'):
+            return int(tf[:-1])
+        elif tf.endswith('h'):
+            return int(tf[:-1]) * 60
+        elif tf.endswith('d'):
+            return int(tf[:-1]) * 60 * 24
+        return 15 # default fallback
+        
     def check_price(self, symbol: str, price: float):
         """
         Evaluate a single price tick against all cached parameters.
         Runs quickly without DB IO. If a boundary is breached, dispatches an update.
+        Also evaluates hybrid expiration based on elapsed time vs timeframe and price direction.
         """
         hit_signals = []
+        now = datetime.utcnow()
         
         with self._lock:
             for sig_id, data in list(self._cache.items()):
@@ -73,6 +101,7 @@ class OutcomeTracker:
                 sl = data['sl']
                 tp1 = data['tp1']
                 tp2 = data['tp2']
+                entry = data['entry']
                 
                 hit_outcome = None
                 
@@ -94,6 +123,22 @@ class OutcomeTracker:
                         
                 if hit_outcome:
                     hit_signals.append((sig_id, hit_outcome))
+                else:
+                    # Evaluate hybrid expiration
+                    tf_mins = self._parse_timeframe_mins(data['timeframe'])
+                    elapsed_mins = (now - data['created_at']).total_seconds() / 60.0
+                    
+                    # Favorable trend?
+                    favorable = (direction == 'LONG' and price >= entry) or \
+                                (direction == 'SHORT' and price <= entry)
+                                
+                    if favorable:
+                        max_limit_mins = tf_mins * 24 # Naive long window
+                    else:
+                        max_limit_mins = tf_mins * 8  # Fixed short window for stagnation
+                        
+                    if elapsed_mins >= max_limit_mins:
+                        hit_signals.append((sig_id, 'EXPIRED'))
                     
         # Outside of loop lock
         for sig_id, outcome in hit_signals:

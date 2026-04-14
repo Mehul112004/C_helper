@@ -25,6 +25,7 @@ export default function MiniChart({ symbol, timeframe, entry }: MiniChartProps) 
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: 'rgba(255, 255, 255, 0.3)',
         fontSize: 9,
+        attributionLogo: false,
       },
       grid: {
         vertLines: { visible: false },

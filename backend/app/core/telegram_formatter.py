@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.models.db import ConfirmedSignal
 
 def format_confirmed_signal(signal: ConfirmedSignal) -> str:
@@ -18,9 +18,11 @@ def format_confirmed_signal(signal: ConfirmedSignal) -> str:
         dt = signal.created_at
         if isinstance(dt, str):
             dt = datetime.fromisoformat(dt)
-        time_str = dt.strftime("%d %b %Y %H:%M UTC")
+        dt = dt + timedelta(hours=5, minutes=30)
+        time_str = dt.strftime("%d %b %Y %H:%M IST")
     else:
-        time_str = datetime.utcnow().strftime("%d %b %Y %H:%M UTC")
+        dt = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        time_str = dt.strftime("%d %b %Y %H:%M IST")
         
     # Reason formatting
     reasoning = signal.reasoning_text.strip()
@@ -58,10 +60,12 @@ def format_watching_signal(setup) -> str:
         if isinstance(dt, str):
             from datetime import datetime
             dt = datetime.fromisoformat(dt)
-        time_str = dt.strftime("%d %b %Y %H:%M UTC")
+        dt = dt + timedelta(hours=5, minutes=30)
+        time_str = dt.strftime("%d %b %Y %H:%M IST")
     else:
         from datetime import datetime
-        time_str = datetime.utcnow().strftime("%d %b %Y %H:%M UTC")
+        dt = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        time_str = dt.strftime("%d %b %Y %H:%M IST")
         
     notes = setup.notes.strip() if hasattr(setup, 'notes') and setup.notes else ""
     

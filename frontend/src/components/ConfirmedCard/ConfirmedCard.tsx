@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { TrendingUp, TrendingDown, Clock, CheckCircle, Send, Edit2 } from 'lucide-react';
 import type { ConfirmedSignal } from '../../types/signals';
 
@@ -18,11 +19,15 @@ function timeAgo(dateStr: string): string {
 }
 
 export default function ConfirmedCard({ signal }: ConfirmedCardProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const isLong = signal.direction === 'LONG';
   const isModified = signal.verdict_status === 'MODIFIED';
 
   return (
-    <div className="relative rounded-xl border border-emerald-500/30 bg-slate-800/80 p-4 transition-all duration-300 hover:border-emerald-500/60 shadow-lg shadow-emerald-900/10">
+    <div 
+      className={`relative rounded-xl border border-emerald-500/30 bg-slate-800/80 p-4 transition-all duration-300 hover:border-emerald-500/60 shadow-lg shadow-emerald-900/10 cursor-pointer ${isExpanded ? 'scale-105 z-10' : ''}`}
+      onClick={() => setIsExpanded(!isExpanded)}
+    >
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
@@ -56,12 +61,12 @@ export default function ConfirmedCard({ signal }: ConfirmedCardProps) {
         {isModified ? <Edit2 size={14} className="mt-0.5 flex-shrink-0" /> : <CheckCircle size={14} className="mt-0.5 flex-shrink-0" />}
         <div>
           <p className="text-xs font-semibold">{isModified ? 'LLM Modified' : 'LLM Confirmed'}</p>
-          <p className="text-xs text-slate-300 mt-0.5 line-clamp-2" title={signal.reasoning_text}>{signal.reasoning_text}</p>
+          <p className={`text-xs text-slate-300 mt-0.5 ${isExpanded ? '' : 'line-clamp-2'}`} title={signal.reasoning_text}>{signal.reasoning_text}</p>
         </div>
       </div>
 
       {/* Entry / SL / TP */}
-      <div className="grid grid-cols-3 gap-1 text-xs mb-3 bg-slate-900/50 p-2 rounded">
+      <div className="grid grid-cols-4 gap-1 text-xs mb-3 bg-slate-900/50 p-2 rounded">
         <div>
           <span className="text-slate-500">Entry</span>
           <p className="text-white font-mono">{signal.entry.toLocaleString()}</p>
@@ -73,6 +78,10 @@ export default function ConfirmedCard({ signal }: ConfirmedCardProps) {
         <div>
           <span className="text-emerald-400">TP1</span>
           <p className="text-emerald-300 font-mono">{signal.tp1.toLocaleString()}</p>
+        </div>
+        <div>
+          <span className="text-emerald-500">TP2</span>
+          <p className="text-emerald-400 font-mono">{signal.tp2?.toLocaleString()}</p>
         </div>
       </div>
 

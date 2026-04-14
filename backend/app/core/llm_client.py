@@ -71,15 +71,21 @@ class LLMClient:
             for idx, z in enumerate(sr_zones[:5]): # limit to 5
                 sr_text += f"  {z.get('zone_type')} at {z.get('price_level')} (score: {z.get('strength_score', 0):.2f})\n"
 
+        tf_warning = ""
+        if signal.timeframe in ['5m', '15m']:
+            tf_warning = "WARNING: This is a low timeframe (5m/15m) signal which is highly noisy. You MUST be extremely critical and strictly REJECT this signal unless there is absolute perfect confluence across all indicators and strong S/R zones. Default to REJECT for these unless perfectly clear.\n"
+
         prompt = (
-            f"You are a crypto trading analyst. Review this algorithmic trade signal and decide: CONFIRM, REJECT, or MODIFY.\n\n"
+            f"You are an elite, highly critical crypto trading analyst. Review this algorithmic trade signal and decide: CONFIRM, REJECT, or MODIFY.\n\n"
+            f"{tf_warning}"
+            f"CRITICAL INSTRUCTION: Do not blindly approve signals. You must REJECT any setup that is weak, goes against the macro trend, or has poor Risk/Reward. Be strict!\n\n"
             f"Pair: {signal.symbol} | TF: {signal.timeframe} | Dir: {signal.direction} | Strategy: {signal.strategy_name}\n"
             f"Entry: {signal.entry} | SL: {signal.sl} | TP1: {signal.tp1} | TP2: {signal.tp2} | Conf: {signal.confidence:.2f}\n"
             f"Notes: {signal.notes}\n\n"
             f"{ind_text}\n"
             f"{sr_text}\n"
             f"{candle_text}\n"
-            f"Respond ONLY in valid JSON, no markdown:\n"
+            f"Respond ONLY in valid JSON format. Do NOT wrap in markdown code blocks. Just output raw JSON:\n"
             f'{{"verdict": "CONFIRM|REJECT|MODIFY", "reasoning": "string", "modified_sl": null, "modified_tp1": null, "modified_tp2": null}}\n'
         )
         return prompt

@@ -106,7 +106,7 @@ export default function WatchingCard({ setup }: WatchingCardProps) {
 
       {/* Entry / SL / TP */}
       {setup.entry && (
-        <div className="grid grid-cols-3 gap-1 text-xs mb-2">
+        <div className="grid grid-cols-4 gap-1 text-xs mb-2">
           <div>
             <span className="text-slate-500">Entry</span>
             <p className="text-white font-mono">{setup.entry.toLocaleString()}</p>
@@ -121,6 +121,12 @@ export default function WatchingCard({ setup }: WatchingCardProps) {
             <div>
               <span className="text-emerald-400">TP1</span>
               <p className="text-emerald-300 font-mono">{setup.tp1.toLocaleString()}</p>
+            </div>
+          )}
+          {setup.tp2 && (
+            <div>
+              <span className="text-emerald-500">TP2</span>
+              <p className="text-emerald-400 font-mono">{setup.tp2.toLocaleString()}</p>
             </div>
           )}
         </div>
