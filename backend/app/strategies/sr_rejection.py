@@ -121,24 +121,19 @@ class SRRejectionStrategy(BaseStrategy):
         )
 
     def calculate_sl(self, signal, candles, atr):
-        """
-        Place SL beyond the zone:
-        LONG: SL = zone_lower - 0.5× ATR
-        SHORT: SL = zone_upper + 0.5× ATR
-
-        Falls back to default if zone info isn't available in the signal notes.
-        """
-        entry = signal.entry or candles[-1].close
+        """Structural SL: Behind the rejection candle's wick + tiny buffer."""
         if signal.direction == "LONG":
-            return round(entry - (1.5 * atr), 8)
+            return round(candles[-1].low - (0.1 * atr), 8)
         else:
-            return round(entry + (1.5 * atr), 8)
+            return round(candles[-1].high + (0.1 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
-        """TP1 = 2× risk, TP2 = 3× risk from entry."""
+        """Risk-based TP: 2R and 3.5R from structural stop."""
         entry = signal.entry or candles[-1].close
-        risk = 1.5 * atr  # matches SL distance
+        sl = self.calculate_sl(signal, candles, atr)
+        risk = abs(entry - sl)
+        risk = max(risk, atr * 0.1)
         if signal.direction == "LONG":
-            return (round(entry + 2.0 * risk, 8), round(entry + 3.0 * risk, 8))
+            return (round(entry + (2.0 * risk), 8), round(entry + (3.5 * risk), 8))
         else:
-            return (round(entry - 2.0 * risk, 8), round(entry - 3.0 * risk, 8))
+            return (round(entry - (2.0 * risk), 8), round(entry - (3.5 * risk), 8))

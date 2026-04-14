@@ -135,13 +135,21 @@ class SRBreakoutStrategy(BaseStrategy):
         )
 
     def calculate_sl(self, signal, candles, atr):
-        """
-        For breakout SL: place at the zone center.
-        Broken resistance becomes support (and vice versa).
-        Falls back to 1.5× ATR if zone info isn't extractable.
-        """
-        entry = signal.entry or candles[-1].close
+        """Structural SL: Behind the broken zone — recent 3-candle pivot + buffer."""
         if signal.direction == "LONG":
-            return round(entry - (1.5 * atr), 8)
+            recent_low = min(c.low for c in candles[-3:])
+            return round(recent_low - (0.2 * atr), 8)
         else:
-            return round(entry + (1.5 * atr), 8)
+            recent_high = max(c.high for c in candles[-3:])
+            return round(recent_high + (0.2 * atr), 8)
+
+    def calculate_tp(self, signal, candles, atr):
+        """Risk-based TP: 2R and 3.5R — wider targets for breakout momentum."""
+        entry = signal.entry or candles[-1].close
+        sl = self.calculate_sl(signal, candles, atr)
+        risk = abs(entry - sl)
+        risk = max(risk, atr * 0.2)
+        if signal.direction == "LONG":
+            return (round(entry + (2.0 * risk), 8), round(entry + (3.5 * risk), 8))
+        else:
+            return (round(entry - (2.0 * risk), 8), round(entry - (3.5 * risk), 8))

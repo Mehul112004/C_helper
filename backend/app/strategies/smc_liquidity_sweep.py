@@ -181,20 +181,28 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
         return None
 
     def calculate_sl(self, signal, candles, atr):
-        """SL just beyond the sweep wick."""
-        entry = signal.entry or candles[-1].close
+        """Structural SL: Placed strictly just beyond the sweep candle's wick."""
+        # We use a tiny 0.1 ATR buffer strictly for spread/slippage
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.3 * atr), 8)
+            return round(candles[-1].low - (0.1 * atr), 8)
         else:
-            return round(candles[-1].high + (0.3 * atr), 8)
+            return round(candles[-1].high + (0.1 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
-        """TP1 at 1.5x ATR, TP2 at 3x ATR — tight scalp targets for LTF."""
+        """Risk-based TP: Scales dynamically based on the size of the sweep wick."""
         entry = signal.entry or candles[-1].close
+        sl = self.calculate_sl(signal, candles, atr)
+        
+        # Calculate literal risk (Entry to SL distance)
+        risk = abs(entry - sl)
+        # Fallback to prevent zero-division if spread is microscopic
+        risk = max(risk, atr * 0.1) 
+
+        # TP1 at 1.5R, TP2 at 3.0R
         if signal.direction == "LONG":
-            return (round(entry + 1.5 * atr, 8), round(entry + 3.0 * atr, 8))
+            return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
         else:
-            return (round(entry - 1.5 * atr, 8), round(entry - 3.0 * atr, 8))
+            return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
 
     def should_confirm_with_llm(self, signal):
         return True

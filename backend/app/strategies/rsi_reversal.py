@@ -86,3 +86,23 @@ class RSIReversalStrategy(BaseStrategy):
             notes=f"RSI {rsi_condition} on {timeframe}. "
                   f"RSI: {prev_rsi:.1f} → {rsi:.1f}",
         )
+
+    def calculate_sl(self, signal, candles, atr):
+        """Structural SL: Behind the reversal candle's rejection wick."""
+        if signal.direction == "LONG":
+            recent_low = min(c.low for c in candles[-3:])
+            return round(recent_low - (0.2 * atr), 8)
+        else:
+            recent_high = max(c.high for c in candles[-3:])
+            return round(recent_high + (0.2 * atr), 8)
+
+    def calculate_tp(self, signal, candles, atr):
+        """Risk-based TP: 1.5R and 3.0R from structural stop."""
+        entry = signal.entry or candles[-1].close
+        sl = self.calculate_sl(signal, candles, atr)
+        risk = abs(entry - sl)
+        risk = max(risk, atr * 0.2)
+        if signal.direction == "LONG":
+            return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
+        else:
+            return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))

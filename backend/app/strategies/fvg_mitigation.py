@@ -174,12 +174,22 @@ class FVGMitigationStrategy(BaseStrategy):
         return None
 
     def calculate_sl(self, signal, candles, atr):
-        """Volatility-based SL."""
-        entry = signal.entry or candles[-1].close
+        """Structural SL: Behind the rejection candle's wick at the FVG zone."""
         if signal.direction == "LONG":
-            return round(entry - (1.5 * atr), 8)
+            return round(candles[-1].low - (0.1 * atr), 8)
         else:
-            return round(entry + (1.5 * atr), 8)
+            return round(candles[-1].high + (0.1 * atr), 8)
+
+    def calculate_tp(self, signal, candles, atr):
+        """Risk-based TP: 1.5R and 3.0R from structural stop."""
+        entry = signal.entry or candles[-1].close
+        sl = self.calculate_sl(signal, candles, atr)
+        risk = abs(entry - sl)
+        risk = max(risk, atr * 0.1)
+        if signal.direction == "LONG":
+            return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
+        else:
+            return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         return True

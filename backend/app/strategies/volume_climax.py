@@ -117,12 +117,22 @@ class VolumeClimaxStrategy(BaseStrategy):
         return None
 
     def calculate_sl(self, signal, candles, atr):
-        """Volatility-based ATR SL."""
-        entry = signal.entry or candles[-1].close
+        """Structural SL: Behind the climax candle's wick — the invalidation point."""
         if signal.direction == "LONG":
-            return round(entry - (2.0 * atr), 8) # Slightly wider SL to weather the climax volatility
+            return round(candles[-1].low - (0.1 * atr), 8)
         else:
-            return round(entry + (2.0 * atr), 8)
+            return round(candles[-1].high + (0.1 * atr), 8)
+
+    def calculate_tp(self, signal, candles, atr):
+        """Risk-based TP: 1.5R and 3.0R from structural stop."""
+        entry = signal.entry or candles[-1].close
+        sl = self.calculate_sl(signal, candles, atr)
+        risk = abs(entry - sl)
+        risk = max(risk, atr * 0.2)
+        if signal.direction == "LONG":
+            return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
+        else:
+            return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         return True

@@ -278,25 +278,29 @@ class BaseStrategy(ABC):
     def calculate_sl(self, signal: SetupSignal, candles: list[Candle], atr: float) -> float:
         """
         Override to customize stop-loss calculation.
-        Default: 1.5 × ATR from entry (below for LONG, above for SHORT).
+        Default: Structural SL behind the recent 3-candle pivot + 0.2 ATR buffer.
         """
-        entry = signal.entry or candles[-1].close
         if signal.direction == "LONG":
-            return round(entry - (1.5 * atr), 8)
+            recent_low = min(c.low for c in candles[-3:])
+            return round(recent_low - (0.2 * atr), 8)
         else:
-            return round(entry + (1.5 * atr), 8)
+            recent_high = max(c.high for c in candles[-3:])
+            return round(recent_high + (0.2 * atr), 8)
 
     def calculate_tp(self, signal: SetupSignal, candles: list[Candle], atr: float) -> tuple:
         """
         Override to customize take-profit calculation.
-        Default: TP1 = 2 × ATR, TP2 = 3.5 × ATR from entry.
+        Default: Risk-based TP at 1.5R and 3.0R from structural stop.
         Returns (tp1, tp2).
         """
         entry = signal.entry or candles[-1].close
+        sl = self.calculate_sl(signal, candles, atr)
+        risk = abs(entry - sl)
+        risk = max(risk, atr * 0.2)  # Fallback floor
         if signal.direction == "LONG":
-            return (round(entry + 2.0 * atr, 8), round(entry + 3.5 * atr, 8))
+            return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
         else:
-            return (round(entry - 2.0 * atr, 8), round(entry - 3.5 * atr, 8))
+            return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         """Override to skip LLM confirmation for this strategy. Default: True."""
