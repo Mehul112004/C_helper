@@ -41,6 +41,7 @@ class OutcomeTracker:
                         dt = datetime.fromisoformat(dt)
                     if not dt:
                         dt = datetime.utcnow()
+                    dt = dt.replace(tzinfo=None)
                         
                     self._cache[sig.id] = {
                         'symbol': sig.symbol,
@@ -62,6 +63,7 @@ class OutcomeTracker:
                 dt = datetime.fromisoformat(dt)
             if not dt:
                 dt = datetime.utcnow()
+            dt = dt.replace(tzinfo=None)
                 
             self._cache[signal.id] = {
                 'symbol': signal.symbol,

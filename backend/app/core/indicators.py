@@ -1,7 +1,7 @@
 """
 Indicator Computation Service
 Computes and caches technical indicators from stored candle data.
-Indicators: EMA (9, 21, 50, 200), RSI (14), MACD (12/26/9),
+Indicators: EMA (9, 21, 50, 100, 200), RSI (14), MACD (12/26/9),
             Bollinger Bands (20/2), ATR (14), Volume MA (20).
 """
 
@@ -173,6 +173,7 @@ class IndicatorService:
         ema_9 = cls.compute_ema(closes, 9)
         ema_21 = cls.compute_ema(closes, 21)
         ema_50 = cls.compute_ema(closes, 50)
+        ema_100 = cls.compute_ema(closes, 100)
         ema_200 = cls.compute_ema(closes, 200)
         rsi_14 = cls.compute_rsi(closes, 14)
         macd = cls.compute_macd(closes, 12, 26, 9)
@@ -191,6 +192,7 @@ class IndicatorService:
             'ema_9': _safe_last(ema_9),
             'ema_21': _safe_last(ema_21),
             'ema_50': _safe_last(ema_50),
+            'ema_100': _safe_last(ema_100),
             'ema_200': _safe_last(ema_200),
             'rsi_14': _safe_last(rsi_14),
             'macd_line': _safe_last(macd['macd_line']),
@@ -221,6 +223,7 @@ class IndicatorService:
             'ema_9': _series_to_list(ema_9),
             'ema_21': _series_to_list(ema_21),
             'ema_50': _series_to_list(ema_50),
+            'ema_100': _series_to_list(ema_100),
             'ema_200': _series_to_list(ema_200),
             'rsi_14': _series_to_list(rsi_14),
             'macd_line': _series_to_list(macd['macd_line']),

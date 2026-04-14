@@ -98,6 +98,7 @@ class Indicators:
     ema_9: Optional[float] = None
     ema_21: Optional[float] = None
     ema_50: Optional[float] = None
+    ema_100: Optional[float] = None
     ema_200: Optional[float] = None
     rsi_14: Optional[float] = None
     macd_line: Optional[float] = None
@@ -160,6 +161,7 @@ class Indicators:
             ema_9=_safe_get(series_dict.get('ema_9', []), idx),
             ema_21=_safe_get(series_dict.get('ema_21', []), idx),
             ema_50=_safe_get(series_dict.get('ema_50', []), idx),
+            ema_100=_safe_get(series_dict.get('ema_100', []), idx),
             ema_200=_safe_get(series_dict.get('ema_200', []), idx),
             rsi_14=_safe_get(series_dict.get('rsi_14', []), idx),
             macd_line=_safe_get(series_dict.get('macd_line', []), idx),
