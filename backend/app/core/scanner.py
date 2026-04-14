@@ -37,7 +37,7 @@ TIMEFRAME_MINUTES = {
 }
 
 # Minimum candles needed for indicator warm-up (EMA 200 + buffer)
-MIN_BACKFILL_CANDLES = 250
+MIN_BACKFILL_CANDLES = 400
 
 
 MAX_SESSIONS = 2

@@ -113,7 +113,15 @@ class LLMQueueManager:
                 return
 
             v_str = verdict_data.verdict
-            w_setup.status = v_str # CONFIRM, REJECT, MODIFY
+            
+            # Map LLM verdict string to formal database schema state
+            if v_str in ('CONFIRM', 'MODIFY'):
+                w_setup.status = 'CONFIRMED'
+            else:
+                w_setup.status = 'REJECTED'
+            
+            # Broadcast state change to clients (which natively clears it out of the watching UI)
+            sse_manager.publish('setup_updated', w_setup.to_dict())
             
             if v_str in ('CONFIRM', 'MODIFY'):
                 # Handle modifying the levels
@@ -142,7 +150,9 @@ class LLMQueueManager:
                 db.session.commit()
                 
                 # Emit SSE for Confirmed feed
-                sse_manager.publish('signal_confirmed', new_sig.to_dict())
+                payload = new_sig.to_dict()
+                payload['session_id'] = w_setup.session_id
+                sse_manager.publish('signal_confirmed', payload)
                 logger.info(f"Signal for {signal.symbol} confirmed by LLM ('{v_str}') and saved to DB.")
                 
                 # Trigger Telegram Notification

@@ -102,10 +102,22 @@ def get_watching(setup_id):
 def list_confirmed_signals():
     """
     Get all confirmed/modified signals that have passed the LLM filter.
+    Includes the origin session_id by joining WatchingSetup.
     """
-    from app.models.db import db, ConfirmedSignal
-    signals = ConfirmedSignal.query.order_by(ConfirmedSignal.created_at.desc()).all()
-    return jsonify({'signals': [s.to_dict() for s in signals], 'count': len(signals)}), 200
+    from app.models.db import db, ConfirmedSignal, WatchingSetup
+    
+    results = db.session.query(ConfirmedSignal, WatchingSetup.session_id)\
+        .join(WatchingSetup, ConfirmedSignal.watching_setup_id == WatchingSetup.id)\
+        .order_by(ConfirmedSignal.created_at.desc())\
+        .all()
+        
+    signals_list = []
+    for sig, session_id in results:
+        sig_dict = sig.to_dict()
+        sig_dict['session_id'] = session_id
+        signals_list.append(sig_dict)
+        
+    return jsonify({'signals': signals_list, 'count': len(signals_list)}), 200
 
 @signals_bp.route('/lm-studio-status', methods=['GET'])
 def lm_studio_status():

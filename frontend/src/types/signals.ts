@@ -32,6 +32,28 @@ export interface WatchingSetup {
   condition_description: string;
 }
 
+export interface ConfirmedSignal {
+  id: string;
+  watching_setup_id: string;
+  session_id: string; // Joined dynamically on the backend
+  symbol: string;
+  timeframe: string;
+  direction: 'LONG' | 'SHORT';
+  strategy_name: string;
+  confidence: number;
+  entry: number;
+  sl: number;
+  tp1: number;
+  tp2: number;
+  verdict_status: 'CONFIRMED' | 'MODIFIED' | 'REJECTED';
+  reasoning_text: string;
+  trade_outcome: 'ACTIVE' | 'HIT_TP1' | 'HIT_TP2' | 'HIT_SL' | 'EXPIRED';
+  telegram_status: 'PENDING' | 'SENT' | 'FAILED';
+  telegram_message_id: string | null;
+  created_at: string;
+  outcome_updated_at: string | null;
+}
+
 export interface PriceUpdate {
   session_id: string;
   symbol: string;
@@ -53,11 +75,12 @@ export type SSEEventType =
   | 'session_started'
   | 'session_stopped'
   | 'candle_close'
-  | 'price_update';
+  | 'price_update'
+  | 'signal_confirmed';
 
 export interface SSEEvent {
   type: SSEEventType;
-  data: AnalysisSession | WatchingSetup | PriceUpdate | CandleCloseEvent | Record<string, unknown>;
+  data: AnalysisSession | WatchingSetup | ConfirmedSignal | PriceUpdate | CandleCloseEvent | Record<string, unknown>;
 }
 
 export interface Strategy {

@@ -5,7 +5,7 @@ import { useAnalysisSessions } from '../../hooks/useAnalysisSessions';
 import SessionPanel from './SessionPanel';
 import WatchingTab from './WatchingTab';
 import ConfirmedTab from './ConfirmedTab';
-import type { WatchingSetup, SSEEventType, PriceUpdate } from '../../types/signals';
+import type { WatchingSetup, ConfirmedSignal, SSEEventType, PriceUpdate } from '../../types/signals';
 import { apiClient } from '../../api/client';
 
 type Tab = 'watching' | 'confirmed';
@@ -17,6 +17,7 @@ type Tab = 'watching' | 'confirmed';
 export default function SignalFeed() {
   const [activeTab, setActiveTab] = useState<Tab>('watching');
   const [watchingSetups, setWatchingSetups] = useState<WatchingSetup[]>([]);
+  const [confirmedSignals, setConfirmedSignals] = useState<ConfirmedSignal[]>([]);
 
   const {
     sessions,
@@ -28,11 +29,16 @@ export default function SignalFeed() {
     setSessions,
   } = useAnalysisSessions();
 
-  // Fetch initial watching setups
+  // Fetch initial watching setups and confirmed signals
   useEffect(() => {
     apiClient
       .get('/signals/watching')
       .then((res) => setWatchingSetups(res.data.setups || []))
+      .catch(() => {});
+      
+    apiClient
+      .get('/signals/confirmed')
+      .then((res) => setConfirmedSignals(res.data.signals || []))
       .catch(() => {});
   }, []);
 
@@ -80,6 +86,14 @@ export default function SignalFeed() {
           );
           break;
         }
+        case 'signal_confirmed': {
+          const sig = data as unknown as ConfirmedSignal;
+          setConfirmedSignals((prev) => {
+            if (prev.some((s) => s.id === sig.id)) return prev;
+            return [sig, ...prev];
+          });
+          break;
+        }
         default:
           break;
       }
@@ -114,8 +128,9 @@ export default function SignalFeed() {
   const watchingCount = watchingSetups.filter((s) => s.status === 'WATCHING').length;
 
   return (
-    <div className="p-6 max-w-[1600px] mx-auto">
-      {/* Page Header */}
+    <div className="h-full w-full overflow-y-auto">
+      <div className="p-6 max-w-[1600px] mx-auto">
+        {/* Page Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white mb-1">Signal Feed</h1>
         <p className="text-sm text-slate-400">
@@ -169,8 +184,9 @@ export default function SignalFeed() {
       {activeTab === 'watching' ? (
         <WatchingTab setups={watchingSetups} />
       ) : (
-        <ConfirmedTab />
-      )}
+        <ConfirmedTab signals={confirmedSignals} activeSessionIds={sessions.map(s => s.session_id)} />
+        )}
+      </div>
     </div>
   );
 }
