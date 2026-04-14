@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Config
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
-LM_STUDIO_MODEL = "qwen/qwen3.5-9b"
+LM_STUDIO_MODEL = "meta-llama-3.1-8b-instruct"
 REQUEST_TIMEOUT = 480  # seconds — generous timeout for large context windows on local LLMs
 
 class LLMVerdictSchema(BaseModel):
@@ -104,7 +104,7 @@ class LLMClient:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2, # Deterministic reasoning
-            "max_tokens": 500,  # Reduced — verdict is short, doesn't need 800 tokens
+            "max_tokens": 6000, # Must be high enough to accommodate the model's thinking/reasoning process
             "stream": False
         }
 
