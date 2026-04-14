@@ -165,5 +165,8 @@ class LLMQueueManager:
                 db.session.commit()
                 sse_manager.publish('setup_rejected', w_setup.to_dict())
                 logger.info(f"Signal for {signal.symbol} REJECTED by LLM. {verdict_data.reasoning}")
+                
+                # Trigger Telegram Notification for REJECT
+                telegram_queue.enqueue_reject_alert(watching_setup_id, verdict_data.reasoning)
 
 llm_queue = LLMQueueManager()

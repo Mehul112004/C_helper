@@ -109,6 +109,17 @@ def format_outcome_update(signal: ConfirmedSignal, outcome: str) -> str:
     else:
         icon = "ℹ️"
         level = 0.0
-        label = outcome
-        
     return f"{icon} {signal.symbol} {signal.direction} — {label} hit at ${level:,.4f}"
+
+def format_rejected_signal(setup, reasoning: str) -> str:
+    """
+    Format a rejected unconfirmed watching setup into a structured Telegram message.
+    """
+    msg = f"""
+🚫 *REJECTED*
+
+*Pair*      : {setup.symbol}
+*Reasoning* : 
+{reasoning}
+"""
+    return msg.strip()

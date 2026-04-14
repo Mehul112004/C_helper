@@ -128,6 +128,7 @@ class WatchingSetup(db.Model):
     expired_at = db.Column(db.DateTime(timezone=True), nullable=True)
     zone_description = db.Column(db.Text, default='')                    # e.g. "Resistance at $3,420"
     condition_description = db.Column(db.Text, default='')               # e.g. "Bearish engulfing on 1h close"
+    telegram_message_id = db.Column(db.String(50), nullable=True)        # Used to reply with verdicts
 
     def to_dict(self):
         return {

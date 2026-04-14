@@ -36,6 +36,14 @@ def create_app(test_config=None):
     with app.app_context():
         # Create tables
         db.create_all()
+        
+        # Backward compatibility column add
+        try:
+            db.session.execute(text("ALTER TABLE watching_setups ADD COLUMN telegram_message_id VARCHAR(50);"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
         # Create hypertable if it doesn't exist
         try:
             db.session.execute(text("SELECT create_hypertable('candles', 'open_time', if_not_exists => TRUE);"))

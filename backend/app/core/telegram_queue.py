@@ -5,14 +5,15 @@ import logging
 from typing import Tuple
 
 from app.core.telegram_client import telegram_client
-from app.core.telegram_formatter import format_confirmed_signal, format_outcome_update, format_watching_signal
+from app.core.telegram_formatter import format_confirmed_signal, format_outcome_update, format_watching_signal, format_rejected_signal
 from app.models.db import db, ConfirmedSignal, WatchingSetup
 
 logger = logging.getLogger(__name__)
 
 # Queue payload types
+# Queue payload types
 # Msg: (signal_id, alert_type, outcome_val)
-# alert_type: 'CONFIRM', 'OUTCOME', or 'WATCHING'
+# alert_type: 'CONFIRM', 'OUTCOME', 'WATCHING', or 'REJECT'
 QueuePayload = Tuple[str, str, str | None]
 
 class TelegramDeliveryManager:
@@ -53,6 +54,9 @@ class TelegramDeliveryManager:
     def enqueue_watching_alert(self, watching_setup_id: str):
         self._q.put((watching_setup_id, 'WATCHING', None))
 
+    def enqueue_reject_alert(self, watching_setup_id: str, reasoning: str):
+        self._q.put((watching_setup_id, 'REJECT', reasoning))
+
     def _run_worker(self):
         while not self._stop_event.is_set():
             try:
@@ -81,6 +85,13 @@ class TelegramDeliveryManager:
                             logger.error(f"WatchingSetup {signal_id} not found for TG delivery")
                             continue
                         text = format_watching_signal(signal)
+                    elif alert_type == 'REJECT':
+                        signal = WatchingSetup.query.get(signal_id)
+                        if not signal:
+                            logger.error(f"WatchingSetup {signal_id} not found for TG REJECT delivery")
+                            continue
+                        text = format_rejected_signal(signal, outcome_val)
+                        reply_to = signal.telegram_message_id
                     else:
                         signal = ConfirmedSignal.query.get(signal_id)
                         if not signal:
@@ -103,7 +114,10 @@ class TelegramDeliveryManager:
                     
                     if response:
                         message_id = str(response.get("result", {}).get("message_id"))
-                        if alert_type in ('CONFIRM', 'OUTCOME'):
+                        if alert_type == 'WATCHING' and message_id != "None":
+                            signal.telegram_message_id = message_id
+                            db.session.commit()
+                        elif alert_type in ('CONFIRM', 'OUTCOME'):
                             signal.telegram_status = 'SENT'
                             signal.telegram_retries = 0
                             if alert_type == 'CONFIRM' and message_id != "None":
