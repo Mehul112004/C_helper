@@ -78,7 +78,7 @@ export function useAnalysisSessions(): UseAnalysisSessionsReturn {
     }
   }, []);
 
-  const canStartNew = sessions.filter((s) => s.status === 'active').length < 2;
+  const canStartNew = sessions.filter((s) => s.status === 'active').length < 10;
 
   return {
     sessions,

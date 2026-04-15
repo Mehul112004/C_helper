@@ -8,7 +8,7 @@ Each session:
 - On candle close: computes indicators, fetches S/R, runs strategies
 - Pushes SSE events for watching card updates and live price ticks
 
-Constraints: max 2 concurrent sessions, one symbol per session, ephemeral (in-memory).
+Constraints: max 10 concurrent sessions, one symbol per session, ephemeral (in-memory).
 """
 
 import json
@@ -40,7 +40,7 @@ TIMEFRAME_MINUTES = {
 MIN_BACKFILL_CANDLES = 400
 
 
-MAX_SESSIONS = 2
+MAX_SESSIONS = 10
 
 
 @dataclass
@@ -74,7 +74,7 @@ class LiveScanner:
     Singleton manager for all active analysis sessions.
 
     Responsibilities:
-    - Create/destroy sessions (max 2 simultaneously)
+    - Create/destroy sessions (max 10 simultaneously)
     - On candle close: compute indicators, fetch S/R zones, run strategies
     - On setup detected: create/update WatchingSetup, push SSE event
     - On each candle close: check existing watching setups for expiry

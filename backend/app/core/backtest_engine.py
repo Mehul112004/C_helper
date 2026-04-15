@@ -146,7 +146,8 @@ class BacktestEngine:
             entry_idx = time_index.get(sig_time)
             if entry_idx is None:
                 # Find closest bar
-                diffs = np.abs(times.astype('datetime64[ns]') - np.datetime64(sig_time))
+                sig_time_naive = sig_time.tz_localize(None) if sig_time.tzinfo else sig_time
+                diffs = np.abs(times.astype('datetime64[ns]') - np.datetime64(sig_time_naive))
                 entry_idx = int(np.argmin(diffs))
 
             entry_price = signal.entry if signal.entry else closes[entry_idx]
@@ -247,16 +248,16 @@ class BacktestEngine:
                 'direction': signal.direction,
                 'strategy_name': signal.strategy_name,
                 'confidence': signal.confidence,
-                'entry_price': entry_price,
-                'sl_price': sl,
-                'tp1_price': tp1,
-                'tp2_price': tp2,
-                'exit_price': exit_price,
+                'entry_price': float(entry_price),
+                'sl_price': float(sl),
+                'tp1_price': float(tp1),
+                'tp2_price': float(tp2),
+                'exit_price': float(exit_price),
                 'outcome': outcome,
-                'pnl': round(pnl, 2),
-                'pnl_pct': round(pnl_pct, 4),
-                'rr_ratio': round(rr_ratio, 4),
-                'duration_mins': round(duration_mins, 2),
+                'pnl': round(float(pnl), 2),
+                'pnl_pct': round(float(pnl_pct), 4),
+                'rr_ratio': round(float(rr_ratio), 4),
+                'duration_mins': round(float(duration_mins), 2),
                 'notes': signal.notes,
             })
 
@@ -370,7 +371,7 @@ class BacktestEngine:
             peaks = np.maximum.accumulate(values)
             drawdowns = peaks - values
             max_dd = float(np.max(drawdowns))
-            max_dd_pct = (max_dd / np.max(peaks)) * 100 if np.max(peaks) > 0 else 0
+            max_dd_pct = float((max_dd / np.max(peaks)) * 100) if np.max(peaks) > 0 else 0.0
         else:
             max_dd = 0.0
             max_dd_pct = 0.0
@@ -398,19 +399,19 @@ class BacktestEngine:
         worst_pnl = float(np.min(pnl_array)) if len(pnl_array) > 0 else 0
 
         return {
-            'total_trades': total_trades,
-            'win_rate': round(win_rate, 2),
-            'total_pnl': round(total_pnl, 2),
-            'total_pnl_pct': round(total_pnl_pct, 2),
-            'sharpe_ratio': round(sharpe, 4),
-            'sortino_ratio': round(sortino, 4),
-            'max_drawdown': round(max_dd, 2),
-            'max_drawdown_pct': round(max_dd_pct, 2),
-            'avg_rr': round(avg_rr, 4),
-            'profit_factor': round(profit_factor, 4),
-            'avg_trade_duration_mins': round(avg_duration, 2),
-            'best_trade_pnl': round(best_pnl, 2),
-            'worst_trade_pnl': round(worst_pnl, 2),
+            'total_trades': int(total_trades),
+            'win_rate': round(float(win_rate), 2),
+            'total_pnl': round(float(total_pnl), 2),
+            'total_pnl_pct': round(float(total_pnl_pct), 2),
+            'sharpe_ratio': round(float(sharpe), 4),
+            'sortino_ratio': round(float(sortino), 4),
+            'max_drawdown': round(float(max_dd), 2),
+            'max_drawdown_pct': round(float(max_dd_pct), 2),
+            'avg_rr': round(float(avg_rr), 4),
+            'profit_factor': round(float(profit_factor), 4),
+            'avg_trade_duration_mins': round(float(avg_duration), 2),
+            'best_trade_pnl': round(float(best_pnl), 2),
+            'worst_trade_pnl': round(float(worst_pnl), 2),
         }
 
     # ---------- Main Entry Point ----------
