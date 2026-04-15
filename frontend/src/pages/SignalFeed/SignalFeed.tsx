@@ -125,17 +125,39 @@ export default function SignalFeed() {
     [stopSession]
   );
 
+  const handleQuickStart = useCallback(async () => {
+    if (strategies.length === 0) return;
+    const allStratNames = strategies.map(s => s.name);
+    const timeframes = ['15m', '1h', '4h', '1d'];
+    
+    try {
+      await handleStartSession('BTCUSDT', allStratNames, timeframes);
+      await handleStartSession('ETHUSDT', allStratNames, timeframes);
+    } catch (e) {
+      console.error("Quick Start failed", e);
+    }
+  }, [strategies, handleStartSession]);
+
   const watchingCount = watchingSetups.filter((s) => s.status === 'WATCHING').length;
 
   return (
     <div className="h-full w-full overflow-y-auto">
       <div className="p-6 max-w-[1600px] mx-auto">
         {/* Page Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white mb-1">Signal Feed</h1>
-        <p className="text-sm text-slate-400">
-          Real-time market scanning — detect setups as they form
-        </p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white mb-1">Signal Feed</h1>
+          <p className="text-sm text-slate-400">
+            Real-time market scanning — detect setups as they form
+          </p>
+        </div>
+        <button
+          onClick={handleQuickStart}
+          disabled={isLoading || strategies.length === 0 || !canStartNew}
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Quick Start (BTC & ETH)
+        </button>
       </div>
 
       {/* Session Panel */}
