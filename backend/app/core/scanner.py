@@ -353,12 +353,14 @@ class LiveScanner:
                             
                             from app.core.llm_queue import llm_queue
                             if hasattr(strategy, 'should_confirm_with_llm') and strategy.should_confirm_with_llm(signal):
+                                htf_candles = self._fetch_htf_candles(symbol, timeframe)
                                 llm_queue.enqueue_signal(
                                     watching_setup_id=setup_dict['id'],
                                     signal=signal,
                                     candles=candle_objects,
                                     indicators=indicators,
-                                    sr_zones=sr_zones
+                                    sr_zones=sr_zones,
+                                    htf_candles=htf_candles
                                 )
 
                 if signals_found == 0:
@@ -557,6 +559,45 @@ class LiveScanner:
             if status == "stopped":
                 record.stopped_at = datetime.utcnow()
             db.session.commit()
+
+    def _fetch_htf_candles(self, symbol: str, timeframe: str) -> list[Candle]:
+        """Fetch Higher Timeframe (HTF) context for the LLM prompt."""
+        from app.models.db import Candle as CandleModel
+        
+        DEFAULT_HTF_MAP = {
+            '1m': '5m',
+            '3m': '15m',
+            '5m': '15m',
+            '15m': '1h',
+            '30m': '4h',
+            '1h': '4h',
+            '2h': '4h',
+            '4h': '1d',
+            '6h': '1d',
+            '8h': '1d',
+            '12h': '1d',
+            '1d': '1w'
+        }
+        
+        htf = DEFAULT_HTF_MAP.get(timeframe)
+        if not htf:
+            return None
+            
+        try:
+            db_candles = (
+                CandleModel.query
+                .filter_by(symbol=symbol, timeframe=htf)
+                .order_by(CandleModel.open_time.desc())
+                .limit(10)
+                .all()
+            )
+            if not db_candles:
+                return None
+                
+            return [Candle.from_db_row(c.to_dict()) for c in reversed(db_candles)]
+        except Exception as e:
+            logger.error(f"Error fetching HTF candles for {symbol}/{timeframe} -> {htf}: {e}")
+            return None
 
 
 # Module-level singleton

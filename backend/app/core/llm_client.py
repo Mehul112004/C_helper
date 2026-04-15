@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Config
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 LM_STUDIO_MODEL = "meta-llama-3.1-8b-instruct"
-REQUEST_TIMEOUT = 480  # seconds — generous timeout for large context windows on local LLMs
+REQUEST_TIMEOUT = 60  # seconds — tight timeout for live trading responsiveness
 
 class LLMVerdictSchema(BaseModel):
     verdict: str = Field(..., description="Must be exactly CONFIRM, REJECT, or MODIFY")
@@ -32,7 +32,8 @@ class LLMClient:
         signal: SetupSignal,
         candles: list[Candle],
         indicators: Indicators,
-        sr_zones: list[dict]
+        sr_zones: list[dict],
+        htf_candles: list[Candle] = None
     ) -> str:
         """
         Constructs the system/user prompt combining the setup and the raw data.
@@ -73,17 +74,27 @@ class LLMClient:
 
         tf_warning = ""
         if signal.timeframe in ['5m', '15m']:
-            tf_warning = "WARNING: This is a low timeframe (5m/15m) signal which is highly noisy. You MUST be extremely critical and strictly REJECT this signal unless there is absolute perfect confluence across all indicators and strong S/R zones. Default to REJECT for these unless perfectly clear.\n"
+            tf_warning = "WARNING: This is a low timeframe (5m/15m) signal which is highly noisy. You MUST be extremely critical and strictly REJECT this signal unless there is absolute perfect confluence across all indicators and strong S/R zones. Default to REJECT for these unless perfectly clear.\n\n"
+
+        htf_text = ""
+        if htf_candles:
+            htf_text = "Higher Timeframe (Macro Trend) Candles:\n"
+            for c in htf_candles[-10:]:
+                htf_text += f"{c.open_time.strftime('%Y-%m-%d %H:%M')} O:{c.open:.2f} C:{c.close:.2f}\n"
 
         prompt = (
-            f"You are an elite, highly critical crypto trading analyst. Review this algorithmic trade signal and decide: CONFIRM, REJECT, or MODIFY.\n\n"
+            f"You are an elite crypto trading analyst. Review this algorithmic signal and decide: CONFIRM, REJECT, or MODIFY.\n\n"
             f"{tf_warning}"
-            f"CRITICAL INSTRUCTION: Do not blindly approve signals. You must REJECT any setup that is weak, goes against the macro trend, or has poor Risk/Reward. Be strict!\n\n"
+            f"CRITICAL VERIFICATION STEPS:\n"
+            f"1. Trend Alignment: Does the signal align with the macro trend (Higher Timeframe)? If not, REJECT.\n"
+            f"2. Micro-Structure: Are you buying into immediate resistance or shorting into support? If yes, REJECT.\n"
+            f"3. Risk/Reward: Is the SL too tight for current ATR volatility? If yes, MODIFY the SL to be safer.\n\n"
             f"Pair: {signal.symbol} | TF: {signal.timeframe} | Dir: {signal.direction} | Strategy: {signal.strategy_name}\n"
             f"Entry: {signal.entry} | SL: {signal.sl} | TP1: {signal.tp1} | TP2: {signal.tp2} | Conf: {signal.confidence:.2f}\n"
             f"Notes: {signal.notes}\n\n"
             f"{ind_text}\n"
             f"{sr_text}\n"
+            f"{htf_text}\n"
             f"{candle_text}\n"
             f"Respond ONLY in valid JSON format. Do NOT wrap in markdown code blocks. Just output raw JSON:\n"
             f'{{"verdict": "CONFIRM|REJECT|MODIFY", "reasoning": "string", "modified_sl": null, "modified_tp1": null, "modified_tp2": null}}\n'
@@ -95,13 +106,14 @@ class LLMClient:
         signal: SetupSignal,
         candles: list[Candle],
         indicators: Indicators,
-        sr_zones: list[dict]
+        sr_zones: list[dict],
+        htf_candles: list[Candle] = None
     ) -> Optional[LLMVerdictSchema]:
         """
         Sends the signal and context to LM Studio synchronously.
         Returns the parsed LLMVerdictSchema or None on failure.
         """
-        prompt = LLMClient._build_prompt_context(signal, candles, indicators, sr_zones)
+        prompt = LLMClient._build_prompt_context(signal, candles, indicators, sr_zones, htf_candles)
         
         payload = {
             "model": LM_STUDIO_MODEL,
@@ -110,7 +122,7 @@ class LLMClient:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2, # Deterministic reasoning
-            "max_tokens": 6000, # Must be high enough to accommodate the model's thinking/reasoning process
+            "max_tokens": 300, # Strict cutoff to prevent runaway garbage generation hanging the queue
             "stream": False
         }
 

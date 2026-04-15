@@ -14,8 +14,8 @@ from app.core.sse import sse_manager
 logger = logging.getLogger(__name__)
 
 # Queue payload type: 
-# (watching_setup_id, SetupSignal, candles_list, indicators_obj, sr_zones_list)
-QueuePayload = Tuple[str, SetupSignal, list[Candle], Indicators, list[dict]]
+# (watching_setup_id, SetupSignal, candles_list, indicators_obj, sr_zones_list, htf_candles)
+QueuePayload = Tuple[str, SetupSignal, list[Candle], Indicators, list[dict], list[Candle]]
 
 class LLMQueueManager:
     """
@@ -47,9 +47,9 @@ class LLMQueueManager:
             self._worker_thread.join(timeout=2)
             logger.info("LLM background worker stopped.")
 
-    def enqueue_signal(self, watching_setup_id: str, signal: SetupSignal, candles: list[Candle], indicators: Indicators, sr_zones: list[dict]):
+    def enqueue_signal(self, watching_setup_id: str, signal: SetupSignal, candles: list[Candle], indicators: Indicators, sr_zones: list[dict], htf_candles: list[Candle] = None):
         """Place a candidate signal in the queue to be evaluated."""
-        self._q.put((watching_setup_id, signal, candles, indicators, sr_zones))
+        self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, htf_candles))
         logger.info(f"Enqueued signal for {signal.symbol} / {signal.strategy_name}. Queue size: {self._q.qsize()}")
 
     def _run_worker(self):
@@ -63,23 +63,23 @@ class LLMQueueManager:
                 if item is None:
                     continue  # Stop signal injected
 
-                # Items can be 5-tuple (new) or 6-tuple (with retry count)
-                if len(item) == 5:
-                    watching_setup_id, signal, candles, indicators, sr_zones = item
+                # Items can be 6-tuple or 7-tuple (with retry count)
+                if len(item) == 6:
+                    watching_setup_id, signal, candles, indicators, sr_zones, htf_candles = item
                     retry_count = 0
                 else:
-                    watching_setup_id, signal, candles, indicators, sr_zones, retry_count = item
+                    watching_setup_id, signal, candles, indicators, sr_zones, htf_candles, retry_count = item
 
                 # Check LM Studio connectivity
                 if not LLMClient.ping_status():
                     logger.warning("LM Studio is unreachable. Backing off 30s and requeuing.")
                     time.sleep(30)
-                    self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, retry_count))
+                    self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, htf_candles, retry_count))
                     continue
                 
                 logger.info(f"Processing LLM evaluation for {signal.symbol} - {signal.strategy_name} "
                             f"(attempt {retry_count + 1}/{MAX_RETRIES + 1})")
-                verdict_data = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones)
+                verdict_data = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones, htf_candles)
                 
                 if verdict_data:
                     self._handle_verdict(watching_setup_id, signal, verdict_data)
@@ -89,7 +89,7 @@ class LLMQueueManager:
                         logger.warning(f"LLM returned no valid verdict. Retry {retry_count + 1}/{MAX_RETRIES} "
                                        f"after {delay}s delay.")
                         time.sleep(delay)
-                        self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, retry_count + 1))
+                        self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, htf_candles, retry_count + 1))
                     else:
                         logger.error(f"LLM failed after {MAX_RETRIES + 1} attempts for "
                                      f"{signal.symbol}/{signal.strategy_name}. Dropping signal.")
