@@ -560,3 +560,93 @@ class TestSRBreakout:
 
         signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [zone])
         assert signal is None
+
+
+# =============================================================================
+# Trend Pullback Confluence Tests (incl. Falling Knife Protection)
+# =============================================================================
+
+class TestTrendPullbackConfluence:
+    """Tests for the Trend Pullback Confluence strategy with velocity filters."""
+
+    @pytest.fixture
+    def strategy(self):
+        from app.strategies.trend_pullback_confluence import TrendPullbackConfluenceStrategy
+        return TrendPullbackConfluenceStrategy()
+
+    def _bullish_setup_indicators(self, atr=2.0, **overrides):
+        """Create indicators for a valid bullish pullback scenario."""
+        defaults = dict(
+            ema_50=100.0, ema_100=98.0, ema_200=95.0,  # Bullish stack
+            rsi_14=42.0, prev_rsi_14=38.0,               # RSI hooking up from exhaustion
+            rsi_14_history=[38.0, 36.0, 37.0, 39.0, 42.0],  # Recent dip below 45
+            atr_14=atr,
+            macd_histogram=0.1,
+            volume_ma_20=1000.0,
+        )
+        defaults.update(overrides)
+        return _make_indicators(**defaults)
+
+    def test_valid_bullish_pullback(self, strategy):
+        """Normal gentle pullback to 50 EMA with RSI hook → LONG signal."""
+        # Gentle candle: open=100.5, high=101.0, low=99.8, close=100.3
+        # body = 0.2, range = 1.2 — well under 1.8*ATR=3.6 and 1.2*ATR=2.4
+        candle = _make_candle(open_=100.5, high=101.0, low=99.8, close=100.3, volume=1200.0)
+        candles = _make_candle_list(49) + [candle]
+        indicators = self._bullish_setup_indicators(atr=2.0)
+
+        signal = strategy.scan("BTCUSDT", "15m", candles, indicators, [])
+        assert signal is not None
+        assert signal.direction == "LONG"
+
+    def test_violent_candle_rejected(self, strategy):
+        """Candle range > 1.8x ATR crashes into EMA → None (falling knife abort)."""
+        # Violent candle: range = 4.0, ATR = 2.0 → 4.0 > 1.8*2.0=3.6 → ABORT
+        candle = _make_candle(open_=102.0, high=102.5, low=98.5, close=100.3, volume=1200.0)
+        candles = _make_candle_list(49) + [candle]
+        indicators = self._bullish_setup_indicators(atr=2.0)
+
+        signal = strategy.scan("BTCUSDT", "15m", candles, indicators, [])
+        assert signal is None
+
+    def test_large_body_marubozu_rejected(self, strategy):
+        """Body > 1.2x ATR but range under threshold → None (marubozu filter)."""
+        # Marubozu: open=103.0, close=100.2, body=2.8, range=3.2
+        # ATR=2.0 → range=3.2 < 1.8*2=3.6 (passes range), body=2.8 > 1.2*2=2.4 (rejected!)
+        candle = _make_candle(open_=103.0, high=103.2, low=100.0, close=100.2, volume=1200.0)
+        candles = _make_candle_list(49) + [candle]
+        indicators = self._bullish_setup_indicators(atr=2.0)
+
+        signal = strategy.scan("BTCUSDT", "15m", candles, indicators, [])
+        assert signal is None
+
+    def test_valid_bearish_pullback(self, strategy):
+        """Normal gentle pullback to 50 EMA (bearish) with RSI hook → SHORT signal."""
+        # Gentle bearish candle tagging EMA 50 from below
+        candle = _make_candle(open_=99.5, high=100.2, low=99.0, close=99.7, volume=1200.0)
+        candles = _make_candle_list(49) + [candle]
+        indicators = _make_indicators(
+            ema_50=100.0, ema_100=102.0, ema_200=105.0,  # Bearish stack
+            rsi_14=58.0, prev_rsi_14=62.0,                 # RSI hooking down
+            rsi_14_history=[62.0, 63.0, 61.0, 59.0, 58.0],
+            atr_14=2.0,
+            macd_histogram=-0.1,
+            volume_ma_20=1000.0,
+        )
+
+        signal = strategy.scan("BTCUSDT", "15m", candles, indicators, [])
+        assert signal is not None
+        assert signal.direction == "SHORT"
+
+    def test_gentle_candle_passes(self, strategy):
+        """Candle range = 1.5x ATR (under 1.8x threshold) → signal fires."""
+        # Range = 3.0, ATR = 2.0 → 3.0/2.0 = 1.5x (under 1.8x)
+        # Body = 0.3 (tiny), well under 1.2*2.0 = 2.4
+        candle = _make_candle(open_=100.3, high=101.5, low=98.5, close=100.6, volume=1200.0)
+        candles = _make_candle_list(49) + [candle]
+        indicators = self._bullish_setup_indicators(atr=2.0)
+
+        signal = strategy.scan("BTCUSDT", "15m", candles, indicators, [])
+        assert signal is not None
+        assert signal.direction == "LONG"
+

@@ -14,9 +14,14 @@ LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 LM_STUDIO_MODEL = "meta-llama-3.1-8b-instruct"
 REQUEST_TIMEOUT = 60  # seconds — tight timeout for live trading responsiveness
 
+# Minimum confidence score from LLM to allow a CONFIRM verdict
+LLM_CONFIDENCE_THRESHOLD = 4
+
 class LLMVerdictSchema(BaseModel):
-    verdict: str = Field(..., description="Must be exactly CONFIRM, REJECT, or MODIFY")
-    reasoning: str = Field(..., description="2-3 sentence explanation of why this verdict was reached based on the technical context provided.")
+    """Chain-of-Thought schema: reasoning MUST come before verdict to prevent hallucination."""
+    reasoning: str = Field(..., description="Step-by-step analysis: (1) trend alignment, (2) candle momentum check, (3) S/R proximity, (4) risk/reward assessment. Be specific about numbers.")
+    confidence_score: int = Field(..., description="Confidence in the trade on a scale of 1-10. 1=extremely risky, 10=textbook setup.")
+    verdict: str = Field(..., description="Must be exactly CONFIRM, REJECT, or MODIFY. Derived from your reasoning above.")
     modified_sl: Optional[float] = Field(None, description="Suggested Stop Loss if verdict is MODIFY")
     modified_tp1: Optional[float] = Field(None, description="Suggested TP1 if verdict is MODIFY")
     modified_tp2: Optional[float] = Field(None, description="Suggested TP2 if verdict is MODIFY")
@@ -65,6 +70,21 @@ class LLMClient:
             ind_parts.append(f"ATR(14): {indicators.atr_14:.4f}")
         ind_text = "Indicators:\n" + "\n".join(ind_parts) + "\n" if ind_parts else ""
 
+        # Candle Momentum Analysis — inject concrete numbers for the LLM
+        current = candles[-1] if candles else None
+        momentum_text = ""
+        if current and indicators.atr_14:
+            range_ratio = current.range_size / indicators.atr_14 if indicators.atr_14 > 0 else 0
+            body_ratio = current.body_size / indicators.atr_14 if indicators.atr_14 > 0 else 0
+            candle_type = "BULLISH" if current.is_bullish else "BEARISH"
+            momentum_text = (
+                f"Candle Momentum Analysis (SETUP CANDLE):\n"
+                f"  Type: {candle_type} | Body: {current.body_size:.2f} | Range: {current.range_size:.2f}\n"
+                f"  Body/ATR ratio: {body_ratio:.2f}x | Range/ATR ratio: {range_ratio:.2f}x\n"
+                f"  Upper wick: {current.upper_wick:.2f} | Lower wick: {current.lower_wick:.2f}\n"
+                f"  NOTE: Body/ATR > 1.0x = aggressive candle. Range/ATR > 1.5x = abnormal volatility.\n\n"
+            )
+
         # S/R Zones text
         sr_text = ""
         if sr_zones:
@@ -83,21 +103,30 @@ class LLMClient:
                 htf_text += f"{c.open_time.strftime('%Y-%m-%d %H:%M')} O:{c.open:.2f} C:{c.close:.2f}\n"
 
         prompt = (
-            f"You are an elite crypto trading analyst. Review this algorithmic signal and decide: CONFIRM, REJECT, or MODIFY.\n\n"
+            f"You are an elite crypto trading risk manager. Your job is to PROTECT capital. "
+            f"Review this algorithmic signal and decide: CONFIRM, REJECT, or MODIFY.\n\n"
             f"{tf_warning}"
-            f"CRITICAL VERIFICATION STEPS:\n"
-            f"1. Trend Alignment: Does the signal align with the macro trend (Higher Timeframe)? If not, REJECT.\n"
-            f"2. Micro-Structure: Are you buying into immediate resistance or shorting into support? If yes, REJECT.\n"
-            f"3. Risk/Reward: Is the SL too tight for current ATR volatility? If yes, MODIFY the SL to be safer.\n\n"
+            f"CRITICAL RULES:\n"
+            f"1. You MUST write your full reasoning FIRST, then assign a confidence score, then give the verdict.\n"
+            f"2. Only reference indicators that are provided in the data below. Do NOT invent or hallucinate data points.\n"
+            f"3. If you are unsure, REJECT. Capital preservation is the priority.\n\n"
+            f"VERIFICATION STEPS (analyze each one in your reasoning):\n"
+            f"1. Candle Momentum: Check the Body/ATR and Range/ATR ratios. If the setup candle is abnormally large (body > 1.0x ATR), "
+            f"this may be a momentum crash, not a pullback. Be very suspicious.\n"
+            f"2. Trend Alignment: Does the signal align with the Higher Timeframe trend? If not, REJECT.\n"
+            f"3. Micro-Structure: Are you buying into immediate resistance or shorting into support? If yes, REJECT.\n"
+            f"4. Risk/Reward: Is the SL too tight for current ATR volatility? If yes, MODIFY the SL to be safer.\n\n"
             f"Pair: {signal.symbol} | TF: {signal.timeframe} | Dir: {signal.direction} | Strategy: {signal.strategy_name}\n"
             f"Entry: {signal.entry} | SL: {signal.sl} | TP1: {signal.tp1} | TP2: {signal.tp2} | Conf: {signal.confidence:.2f}\n"
             f"Notes: {signal.notes}\n\n"
+            f"{momentum_text}"
             f"{ind_text}\n"
             f"{sr_text}\n"
             f"{htf_text}\n"
             f"{candle_text}\n"
-            f"Respond ONLY in valid JSON format. Do NOT wrap in markdown code blocks. Just output raw JSON:\n"
-            f'{{"verdict": "CONFIRM|REJECT|MODIFY", "reasoning": "string", "modified_sl": null, "modified_tp1": null, "modified_tp2": null}}\n'
+            f"Respond ONLY in valid JSON. Write reasoning FIRST, then confidence_score (1-10), then verdict:\n"
+            f'{{"reasoning": "your step-by-step analysis here", "confidence_score": 1, "verdict": "CONFIRM|REJECT|MODIFY", '
+            f'"modified_sl": null, "modified_tp1": null, "modified_tp2": null}}\n'
         )
         return prompt
 
@@ -118,11 +147,16 @@ class LLMClient:
         payload = {
             "model": LM_STUDIO_MODEL,
             "messages": [
-                {"role": "system", "content": "You are a quantitative trading system. Output ONLY valid JSON. No markdown, no explanation outside the JSON."},
+                {"role": "system", "content": (
+                    "You are a quantitative trading risk manager. Output ONLY valid JSON. "
+                    "No markdown, no explanation outside the JSON. "
+                    "IMPORTANT: Write your reasoning FIRST before deciding the verdict. "
+                    "Only reference data that is explicitly provided. Never invent indicators or patterns."
+                )},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2, # Deterministic reasoning
-            "max_tokens": 300, # Strict cutoff to prevent runaway garbage generation hanging the queue
+            "max_tokens": 500, # Increased to accommodate chain-of-thought reasoning
             "stream": False
         }
 
@@ -180,7 +214,19 @@ class LLMClient:
             if parsed.verdict not in ('CONFIRM', 'REJECT', 'MODIFY'):
                 logger.error(f"LLM produced invalid verdict: {parsed.verdict}")
                 return None
-                
+
+            # Clamp confidence_score to valid range
+            parsed.confidence_score = max(1, min(10, parsed.confidence_score))
+
+            # Safety net: auto-downgrade low-confidence CONFIRMs
+            if parsed.verdict == 'CONFIRM' and parsed.confidence_score < LLM_CONFIDENCE_THRESHOLD:
+                logger.warning(
+                    f"[LLMClient] Auto-downgrade: LLM said CONFIRM but confidence_score={parsed.confidence_score} "
+                    f"(< {LLM_CONFIDENCE_THRESHOLD}). Overriding to REJECT."
+                )
+                parsed.verdict = 'REJECT'
+                parsed.reasoning += f" [AUTO-REJECTED: confidence_score {parsed.confidence_score}/10 below threshold {LLM_CONFIDENCE_THRESHOLD}]"
+
             return parsed
             
         except requests.exceptions.Timeout:

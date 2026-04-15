@@ -80,6 +80,9 @@ class LLMQueueManager:
                 logger.info(f"Processing LLM evaluation for {signal.symbol} - {signal.strategy_name} "
                             f"(attempt {retry_count + 1}/{MAX_RETRIES + 1})")
                 verdict_data = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones, htf_candles)
+                if verdict_data:
+                    logger.info(f"[LLMQueue] Verdict={verdict_data.verdict} confidence={verdict_data.confidence_score}/10 "
+                                f"for {signal.symbol}/{signal.strategy_name}")
                 
                 if verdict_data:
                     self._handle_verdict(watching_setup_id, signal, verdict_data)

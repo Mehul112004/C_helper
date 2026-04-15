@@ -37,6 +37,10 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
     RSI_OVERBOUGHT_THRESHOLD = 60  # RSI must have risen above this for SHORT
     RSI_LOOKBACK = 5             # Candles to look back for the RSI exhaustion dip
 
+    # Volatility / Momentum Filters ("Falling Knife" Protection)
+    ATR_RANGE_MULTIPLIER = 1.8   # Max candle range as multiple of ATR before aborting
+    ATR_BODY_MULTIPLIER = 1.2    # Max candle body size as multiple of ATR before aborting
+
     def _check_ema_alignment_bullish(self, indicators: Indicators) -> bool:
         """Verify 50 EMA > 100 EMA > 200 EMA (bullish stack)."""
         if not all([indicators.ema_50, indicators.ema_100, indicators.ema_200]):
@@ -94,12 +98,21 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
 
         current = candles[-1]
 
+        # ═══════ "Falling Knife" Protection ═══════
+        # If the current candle's range is massively larger than the average
+        # true range, it is a momentum dump/pump, not a gentle pullback.
+        if indicators.atr_14 and current.range_size > (indicators.atr_14 * self.ATR_RANGE_MULTIPLIER):
+            return None
+
         # ═══════ LONG Setup ═══════
         if self._check_ema_alignment_bullish(indicators):
             # Confluence 2: Price must tag the 50 EMA
             if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14):
                 # For longs, price low should be near/at EMA 50, close should be above
                 if current.close > indicators.ema_50:
+                    # Momentum filter: reject massive red marubozu that barely closed above
+                    if indicators.atr_14 and current.body_size >= (indicators.atr_14 * self.ATR_BODY_MULTIPLIER):
+                        return None
                     # Confluence 3: RSI momentum hook
                     if self._rsi_hooked_bullish(candles, indicators):
                         confidence = 0.65
@@ -142,6 +155,9 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
         if self._check_ema_alignment_bearish(indicators):
             if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14):
                 if current.close < indicators.ema_50:
+                    # Momentum filter: reject massive green marubozu that barely closed below
+                    if indicators.atr_14 and current.body_size >= (indicators.atr_14 * self.ATR_BODY_MULTIPLIER):
+                        return None
                     if self._rsi_hooked_bearish(candles, indicators):
                         confidence = 0.65
 
