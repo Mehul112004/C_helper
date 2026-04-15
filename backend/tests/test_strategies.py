@@ -650,3 +650,252 @@ class TestTrendPullbackConfluence:
         assert signal is not None
         assert signal.direction == "LONG"
 
+
+# =============================================================================
+# Fibonacci Retracement Tests
+# =============================================================================
+
+class TestFibonacciRetracement:
+    """Tests for the Fibonacci Retracement strategy."""
+
+    @pytest.fixture
+    def strategy(self):
+        from app.strategies.fibonacci_retracement import FibonacciRetracementStrategy
+        return FibonacciRetracementStrategy()
+
+    def _build_bullish_impulse_candles(self):
+        """
+        Build a 50-candle window with a clear bullish impulse followed by a retracement
+        into the golden pocket.
+
+        Structure:
+          - Candles 0-17: Flat base around 92
+          - Candles 18-19: Dip into swing low zone
+          - Candle 20: Swing low at 90.0 (confirmed pivot)
+          - Candles 21-26: Rally from 90 to 108
+          - Candle 27: Swing high at 110.0 (confirmed pivot)
+          - Candles 28-48: Retracement toward golden pocket
+          - Candle 49: Rejection candle in golden pocket
+
+        Swing range = 110 - 90 = 20
+        Golden pocket: 50% = 100.0, 61.8% = 97.64
+        """
+        candles = []
+
+        # Candles 0-17: Flat base around 92
+        for i in range(18):
+            candles.append(_make_candle(
+                close=92.0 + i * 0.05, open_=91.5 + i * 0.05,
+                high=93.0 + i * 0.05, low=91.0 + i * 0.05,
+                volume=1000.0, time_offset_hours=i,
+            ))
+
+        # Candles 18-19: Dip into swing low zone
+        candles.append(_make_candle(close=91.0, open_=92.0, high=92.5, low=90.5, volume=1000.0, time_offset_hours=18))
+        candles.append(_make_candle(close=90.5, open_=91.0, high=91.5, low=90.3, volume=1000.0, time_offset_hours=19))
+
+        # Candle 20: THE SWING LOW
+        candles.append(_make_candle(close=90.5, open_=91.0, high=91.0, low=90.0, volume=1000.0, time_offset_hours=20))
+
+        # Candles 21-23: Rally (lows > 90.0 to confirm swing low pivot)
+        candles.append(_make_candle(close=93.0, open_=91.0, high=93.5, low=91.0, volume=1200.0, time_offset_hours=21))
+        candles.append(_make_candle(close=96.0, open_=93.0, high=96.5, low=92.5, volume=1300.0, time_offset_hours=22))
+        candles.append(_make_candle(close=99.0, open_=96.0, high=99.5, low=95.5, volume=1400.0, time_offset_hours=23))
+
+        # Candles 24-26: Continue rally
+        candles.append(_make_candle(close=102.0, open_=99.0, high=102.5, low=98.5, volume=1500.0, time_offset_hours=24))
+        candles.append(_make_candle(close=105.0, open_=102.0, high=105.5, low=101.5, volume=1500.0, time_offset_hours=25))
+        candles.append(_make_candle(close=108.0, open_=105.0, high=108.5, low=104.5, volume=1500.0, time_offset_hours=26))
+
+        # Candle 27: THE SWING HIGH
+        candles.append(_make_candle(close=109.5, open_=108.0, high=110.0, low=107.5, volume=1600.0, time_offset_hours=27))
+
+        # Candles 28-30: Pull back (highs < 110.0 to confirm swing high pivot)
+        candles.append(_make_candle(close=108.0, open_=109.0, high=109.5, low=107.5, volume=1200.0, time_offset_hours=28))
+        candles.append(_make_candle(close=106.0, open_=108.0, high=108.5, low=105.5, volume=1100.0, time_offset_hours=29))
+        candles.append(_make_candle(close=104.0, open_=106.0, high=106.5, low=103.5, volume=1000.0, time_offset_hours=30))
+
+        # Candles 31-48: Continue retracement toward golden pocket
+        for i in range(31, 49):
+            price = 104.0 - (i - 31) * 0.3
+            candles.append(_make_candle(
+                close=price, open_=price + 0.3,
+                high=price + 0.8, low=price - 0.8,
+                volume=1000.0, time_offset_hours=i,
+            ))
+
+        # Candle 49: REJECTION CANDLE in golden pocket (~98.8)
+        candles.append(_make_candle(
+            open_=98.2, high=99.0, low=97.5, close=98.8,
+            volume=1500.0, time_offset_hours=49,
+        ))
+
+        return candles
+
+    def _build_bearish_impulse_candles(self):
+        """
+        Build a 50-candle window with a bearish impulse followed by upward
+        retracement into the bearish golden pocket.
+
+        Swing high at 110 -> drop to 90 -> retracement up to golden pocket.
+        Bearish golden pocket: 50% = 100.0, 61.8% = 102.36
+        """
+        candles = []
+
+        # Candles 0-17: Flat base around 108
+        for i in range(18):
+            candles.append(_make_candle(
+                close=108.0 - i * 0.05, open_=108.5 - i * 0.05,
+                high=109.0 - i * 0.05, low=107.0 - i * 0.05,
+                volume=1000.0, time_offset_hours=i,
+            ))
+
+        # Candles 18-19: Rally into swing high zone
+        candles.append(_make_candle(close=109.0, open_=108.0, high=109.5, low=107.5, volume=1000.0, time_offset_hours=18))
+        candles.append(_make_candle(close=109.5, open_=109.0, high=109.8, low=108.5, volume=1000.0, time_offset_hours=19))
+
+        # Candle 20: THE SWING HIGH
+        candles.append(_make_candle(close=109.5, open_=109.0, high=110.0, low=109.0, volume=1000.0, time_offset_hours=20))
+
+        # Candles 21-23: Drop (highs < 110 to confirm pivot)
+        candles.append(_make_candle(close=107.0, open_=109.0, high=109.0, low=106.5, volume=1200.0, time_offset_hours=21))
+        candles.append(_make_candle(close=104.0, open_=107.0, high=107.5, low=103.5, volume=1300.0, time_offset_hours=22))
+        candles.append(_make_candle(close=101.0, open_=104.0, high=104.5, low=100.5, volume=1400.0, time_offset_hours=23))
+
+        # Candles 24-26: Continue dropping
+        candles.append(_make_candle(close=98.0, open_=101.0, high=101.5, low=97.5, volume=1500.0, time_offset_hours=24))
+        candles.append(_make_candle(close=95.0, open_=98.0, high=98.5, low=94.5, volume=1500.0, time_offset_hours=25))
+        candles.append(_make_candle(close=92.0, open_=95.0, high=95.5, low=91.5, volume=1500.0, time_offset_hours=26))
+
+        # Candle 27: THE SWING LOW
+        candles.append(_make_candle(close=90.5, open_=92.0, high=92.5, low=90.0, volume=1600.0, time_offset_hours=27))
+
+        # Candles 28-30: Retrace up (lows > 90.0 to confirm pivot)
+        candles.append(_make_candle(close=92.0, open_=91.0, high=92.5, low=90.5, volume=1200.0, time_offset_hours=28))
+        candles.append(_make_candle(close=94.0, open_=92.0, high=94.5, low=91.5, volume=1100.0, time_offset_hours=29))
+        candles.append(_make_candle(close=96.0, open_=94.0, high=96.5, low=93.5, volume=1000.0, time_offset_hours=30))
+
+        # Candles 31-48: Continue retracement toward bearish golden pocket
+        for i in range(31, 49):
+            price = 96.0 + (i - 31) * 0.35
+            candles.append(_make_candle(
+                close=price, open_=price - 0.3,
+                high=price + 0.8, low=price - 0.8,
+                volume=1000.0, time_offset_hours=i,
+            ))
+
+        # Candle 49: REJECTION CANDLE — bearish, big upper wick (~101.2)
+        candles.append(_make_candle(
+            open_=101.8, high=102.5, low=101.0, close=101.2,
+            volume=1500.0, time_offset_hours=49,
+        ))
+
+        return candles
+
+    def test_bullish_golden_pocket_entry(self, strategy):
+        """Price retraces into golden pocket after rally with bullish rejection -> LONG."""
+        candles = self._build_bullish_impulse_candles()
+        indicators = _make_indicators(
+            atr_14=2.0, rsi_14=45.0, volume_ma_20=1000.0, ema_200=85.0,
+        )
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
+        assert signal is not None
+        assert signal.direction == "LONG"
+        assert signal.confidence >= 0.65
+        assert "golden pocket" in signal.notes
+
+    def test_bearish_golden_pocket_entry(self, strategy):
+        """Price retraces into golden pocket after drop with bearish rejection -> SHORT."""
+        candles = self._build_bearish_impulse_candles()
+        indicators = _make_indicators(
+            atr_14=2.0, rsi_14=55.0, volume_ma_20=1000.0, ema_200=115.0,
+        )
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
+        assert signal is not None
+        assert signal.direction == "SHORT"
+        assert signal.confidence >= 0.65
+
+    def test_no_impulse_too_small(self, strategy):
+        """Swing range < 3x ATR -> None."""
+        candles = self._build_bullish_impulse_candles()
+        indicators = _make_indicators(atr_14=10.0)
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
+        assert signal is None
+
+    def test_no_retracement(self, strategy):
+        """Price hasn't pulled back (still near swing high) -> None."""
+        candles = self._build_bullish_impulse_candles()
+        candles[-1] = _make_candle(
+            open_=109.0, high=110.5, low=108.5, close=109.5,
+            volume=1500.0, time_offset_hours=49,
+        )
+        indicators = _make_indicators(atr_14=2.0)
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
+        assert signal is None
+
+    def test_no_rejection_candle(self, strategy):
+        """Price in golden pocket but no wick rejection pattern -> None."""
+        candles = self._build_bullish_impulse_candles()
+        candles[-1] = _make_candle(
+            open_=99.0, high=99.2, low=98.8, close=98.9,
+            volume=1500.0, time_offset_hours=49,
+        )
+        indicators = _make_indicators(atr_14=2.0)
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
+        assert signal is None
+
+    def test_382_level_lower_confidence(self, strategy):
+        """Entry at 38.2% level fires with lower base confidence than golden pocket."""
+        candles = self._build_bullish_impulse_candles()
+        # 38.2% level for bullish = 110 - (20 * 0.382) = 102.36
+        candles[-1] = _make_candle(
+            open_=102.0, high=102.8, low=101.5, close=102.5,
+            volume=1500.0, time_offset_hours=49,
+        )
+        indicators = _make_indicators(atr_14=2.0, rsi_14=45.0, volume_ma_20=1000.0)
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
+        assert signal is not None
+        assert signal.direction == "LONG"
+        assert "38.2%" in signal.notes
+
+    def test_confidence_with_sr_confluence(self, strategy):
+        """Golden pocket overlaps an S/R zone -> boosted confidence."""
+        candles = self._build_bullish_impulse_candles()
+        indicators = _make_indicators(
+            atr_14=2.0, rsi_14=45.0, volume_ma_20=1000.0, ema_200=85.0,
+        )
+        sr_zones = [{'price_level': 99.0, 'zone_type': 'support', 'strength_score': 0.5}]
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, sr_zones)
+        assert signal is not None
+        assert signal.confidence >= 0.80
+        assert "S/R confluence: yes" in signal.notes
+
+    def test_insufficient_candles(self, strategy):
+        """Fewer than required candles -> None."""
+        candles = _make_candle_list(10)
+        indicators = _make_indicators(atr_14=2.0)
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
+        assert signal is None
+
+    def test_sl_behind_wick(self, strategy):
+        """SL is placed behind the rejection candle's low + 0.5 ATR buffer."""
+        candles = self._build_bullish_impulse_candles()
+        indicators = _make_indicators(atr_14=2.0, rsi_14=45.0, volume_ma_20=1000.0)
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
+        assert signal is not None
+        sl = strategy.calculate_sl(signal, candles, 2.0)
+        assert sl == round(97.5 - 1.0, 8)
+
+    def test_tp_risk_based(self, strategy):
+        """TP1 at 1.5R, TP2 at 3.0R from SL."""
+        candles = self._build_bullish_impulse_candles()
+        indicators = _make_indicators(atr_14=2.0, rsi_14=45.0, volume_ma_20=1000.0)
+        signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
+        assert signal is not None
+        tp1, tp2 = strategy.calculate_tp(signal, candles, 2.0)
+        sl = strategy.calculate_sl(signal, candles, 2.0)
+        risk = abs(signal.entry - sl)
+        assert round(tp1, 4) == round(signal.entry + 1.5 * risk, 4)
+        assert round(tp2, 4) == round(signal.entry + 3.0 * risk, 4)
+
+

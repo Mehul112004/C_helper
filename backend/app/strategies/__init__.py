@@ -6,9 +6,13 @@
 from app.strategies.smc_liquidity_sweep import SMCLiquiditySweepStrategy
 from app.strategies.smc_structure_shift import SMCStructureShiftStrategy
 from app.strategies.trend_pullback_confluence import TrendPullbackConfluenceStrategy
+from app.strategies.order_block_retest import OrderBlockRetestStrategy
+from app.strategies.fibonacci_retracement import FibonacciRetracementStrategy
 
 __all__ = [
     'SMCLiquiditySweepStrategy',
     'SMCStructureShiftStrategy',
     'TrendPullbackConfluenceStrategy',
+    'OrderBlockRetestStrategy',
+    'FibonacciRetracementStrategy',
 ]
