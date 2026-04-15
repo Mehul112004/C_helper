@@ -151,7 +151,8 @@ class LLMClient:
                     "You are a quantitative trading risk manager. Output ONLY valid JSON. "
                     "No markdown, no explanation outside the JSON. "
                     "IMPORTANT: Write your reasoning FIRST before deciding the verdict. "
-                    "Only reference data that is explicitly provided. Never invent indicators or patterns."
+                    "Only reference data that is explicitly provided. Never invent indicators or patterns. "
+                    "CRITICAL: Do NOT use newlines (\\n) or carriage returns inside JSON string values. Write reasoning as a single continuous paragraph."
                 )},
                 {"role": "user", "content": prompt}
             ],
@@ -207,8 +208,9 @@ class LLMClient:
                 if json_end != -1:
                     content = content[:json_end + 1]
 
-            # Parse with Pydantic
-            parsed = LLMVerdictSchema.model_validate_json(content)
+            # Parse with builtin JSON parser allowing strict=False for control characters (e.g. unescaped newlines)
+            raw_dict = json.loads(content, strict=False)
+            parsed = LLMVerdictSchema.model_validate(raw_dict)
             
             # Ensure proper string matching
             if parsed.verdict not in ('CONFIRM', 'REJECT', 'MODIFY'):
@@ -234,6 +236,9 @@ class LLMClient:
             return None
         except requests.exceptions.RequestException as e:
             logger.error(f"LM Studio connection error: {str(e)}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"LLM JSON Decode error: {str(e)}\nRaw Response: {content}")
             return None
         except ValidationError as e:
             logger.error(f"LLM JSON Schema validation error: {str(e)}\nRaw Response: {content}")
