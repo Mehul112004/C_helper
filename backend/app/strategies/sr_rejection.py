@@ -123,9 +123,9 @@ class SRRejectionStrategy(BaseStrategy):
     def calculate_sl(self, signal, candles, atr):
         """Structural SL: Behind the rejection candle's wick + tiny buffer."""
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.1 * atr), 8)
+            return round(candles[-1].low - (0.5 * atr), 8)
         else:
-            return round(candles[-1].high + (0.1 * atr), 8)
+            return round(candles[-1].high + (0.5 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: 2R and 3.5R from structural stop."""

@@ -124,6 +124,8 @@ class Indicators:
 
     # Bollinger Band width history (last 20 values) for squeeze detection
     bb_width_history: list = field(default_factory=list)
+    # RSI history (last 5 values) for momentum hook detection
+    rsi_14_history: list = field(default_factory=list)
 
     @classmethod
     def from_series(cls, series_dict: dict, idx: int) -> 'Indicators':
@@ -156,6 +158,15 @@ class Indicators:
             if val is not None:
                 bb_width_history.append(val)
 
+        # Extract RSI history (last 5 values up to and including idx)
+        rsi_series = series_dict.get('rsi_14', [])
+        rsi_history_start = max(0, idx - 4)
+        rsi_14_history = []
+        for i in range(rsi_history_start, min(idx + 1, len(rsi_series))):
+            val = _safe_get(rsi_series, i)
+            if val is not None:
+                rsi_14_history.append(val)
+
         return cls(
             # Current bar
             ema_9=_safe_get(series_dict.get('ema_9', []), idx),
@@ -187,6 +198,9 @@ class Indicators:
 
             # Bollinger width history
             bb_width_history=bb_width_history,
+            
+            # RSI history
+            rsi_14_history=rsi_14_history,
         )
 
 

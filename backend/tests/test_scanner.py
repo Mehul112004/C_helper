@@ -103,7 +103,7 @@ class TestSessionMetadata:
         MockStream.return_value.start = MagicMock()
         # EMA Crossover: 15m, 1h, 4h  |  RSI Reversal: 1h, 4h
         result = scanner.start_session("BTCUSDT", ["EMA Crossover", "RSI Reversal"])
-        assert sorted(result['timeframes']) == sorted(["15m", "1h", "4h"])
+        assert sorted(result['timeframes']) == sorted(["5m", "15m", "1h", "4h"])
 
     @patch('app.core.scanner.BinanceStreamManager')
     def test_live_price_initially_none(self, MockStream, scanner):

@@ -90,6 +90,16 @@ class FVGMitigationStrategy(BaseStrategy):
                 fvg_top = c3.low
                 fvg_bottom = c1.high
 
+                # Check if ANY intervening candle already filled this gap
+                already_mitigated = False
+                for k in range(i + 1, len(candles) - 1):
+                    if candles[k].low <= fvg_bottom:
+                        already_mitigated = True
+                        break
+
+                if already_mitigated:
+                    continue  # Skip, this is a stale/dead FVG
+
                 # Check if current price is inside the FVG (mitigating it)
                 if fvg_bottom <= current_candle.low <= fvg_top or fvg_bottom <= current_candle.close <= fvg_top:
                     # We are in the gap. Check for bullish reversal sign
@@ -136,6 +146,16 @@ class FVGMitigationStrategy(BaseStrategy):
                 fvg_top = c1.low
                 fvg_bottom = c3.high
 
+                # Check if ANY intervening candle already filled this gap
+                already_mitigated = False
+                for k in range(i + 1, len(candles) - 1):
+                    if candles[k].high >= fvg_top:
+                        already_mitigated = True
+                        break
+
+                if already_mitigated:
+                    continue  # Skip, this is a stale/dead FVG
+
                 if fvg_bottom <= current_candle.high <= fvg_top or fvg_bottom <= current_candle.close <= fvg_top:
                     if current_candle.is_bearish:
                         # ★ CONFLUENCE: Require an adjacent bearish Order Block ★
@@ -176,9 +196,9 @@ class FVGMitigationStrategy(BaseStrategy):
     def calculate_sl(self, signal, candles, atr):
         """Structural SL: Behind the rejection candle's wick at the FVG zone."""
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.1 * atr), 8)
+            return round(candles[-1].low - (0.5 * atr), 8)
         else:
-            return round(candles[-1].high + (0.1 * atr), 8)
+            return round(candles[-1].high + (0.5 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: 1.5R and 3.0R from structural stop."""

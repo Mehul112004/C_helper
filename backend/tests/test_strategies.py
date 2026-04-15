@@ -51,6 +51,7 @@ def _make_indicators(**overrides):
         prev_bb_upper=104.0, prev_bb_lower=96.0,
         prev_bb_width=0.08,
         bb_width_history=[0.08] * 20,
+        rsi_14_history=[50.0] * 5,
     )
     defaults.update(overrides)
     return Indicators(**defaults)
@@ -150,11 +151,11 @@ class TestRSIReversal:
         return RSIReversalStrategy()
 
     def test_oversold_reversal(self, strategy):
-        """RSI crosses above 30 from oversold → LONG signal."""
+        """RSI crosses above 35 from oversold → LONG signal."""
         candles = _make_candle_list(49) + [_make_candle(close=101.0)]
         indicators = _make_indicators(
-            rsi_14=32.0,           # Now above 30
-            prev_rsi_14=28.0,      # Was below 30
+            rsi_14=36.0,           # Now above 35
+            prev_rsi_14=34.0,      # Was below 35
             ema_50=97.0,           # Close > EMA50 ✓
             ema_200=90.0,          # Close > EMA200 ✓
         )
@@ -163,11 +164,11 @@ class TestRSIReversal:
         assert signal.direction == "LONG"
 
     def test_overbought_reversal(self, strategy):
-        """RSI crosses below 70 from overbought → SHORT signal."""
+        """RSI crosses below 65 from overbought → SHORT signal."""
         candles = _make_candle_list(49) + [_make_candle(close=95.0)]
         indicators = _make_indicators(
-            rsi_14=68.0,           # Now below 70
-            prev_rsi_14=72.0,      # Was above 70
+            rsi_14=64.0,           # Now below 65
+            prev_rsi_14=66.0,      # Was above 65
             ema_50=97.0,           # Close < EMA50 ✓
             ema_200=100.0,         # Close < EMA200 ✓
         )
@@ -197,7 +198,7 @@ class TestRSIReversal:
         """Oversold reversal + positive MACD histogram → higher confidence."""
         candles = _make_candle_list(49) + [_make_candle(close=101.0, volume=1200.0)]
         indicators = _make_indicators(
-            rsi_14=32.0, prev_rsi_14=28.0,
+            rsi_14=36.0, prev_rsi_14=34.0,
             ema_200=90.0,
             macd_histogram=0.5,  # Positive = bullish confirmation
             volume_ma_20=1000.0,
@@ -276,7 +277,7 @@ class TestBollingerSqueeze:
         assert signal is None
 
     def test_breakout_no_volume(self, strategy):
-        """Squeeze breakout but weak volume → None."""
+        """Squeeze breakout but weak volume → Low Confidence Signal."""
         candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=800.0)]
 
         indicators = _make_indicators(
@@ -289,7 +290,8 @@ class TestBollingerSqueeze:
         )
 
         signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
-        assert signal is None
+        assert signal is not None
+        assert round(signal.confidence, 2) == 0.75  # Base 0.55 + EMA align 0.10 + expanding 0.10
 
     def test_insufficient_bb_history(self, strategy):
         """Too few bb_width_history values → None."""
@@ -533,7 +535,7 @@ class TestSRBreakout:
         assert signal is None
 
     def test_breakout_no_volume(self, strategy):
-        """Breakout candle but weak volume → None."""
+        """Breakout candle but weak volume → Low Confidence Signal."""
         prev_candle = _make_candle(open_=104.0, high=105.5, low=103.5, close=105.5, time_offset_hours=48)
         break_candle = _make_candle(open_=105.0, high=108.0, low=105.0, close=107.5, volume=800.0, time_offset_hours=49)
 
@@ -542,7 +544,8 @@ class TestSRBreakout:
         indicators = _make_indicators(volume_ma_20=1000.0)  # 800 < 1000 * 1.3 = 1300
 
         signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [zone])
-        assert signal is None
+        assert signal is not None
+        assert round(signal.confidence, 2) == 0.75  # Base 0.55 + EMA align 0.10 + retest 0.10
 
     def test_weak_body_no_breakout(self, strategy):
         """Breakout close but weak body (doji-like) → None."""

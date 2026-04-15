@@ -33,7 +33,6 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
     min_confidence = 0.60
 
     # Configuration
-    EMA_TAG_TOLERANCE = 0.0015   # 0.15% — how close price must get to 50 EMA
     RSI_OVERSOLD_THRESHOLD = 40  # RSI must have dipped below this for LONG
     RSI_OVERBOUGHT_THRESHOLD = 60  # RSI must have risen above this for SHORT
     RSI_LOOKBACK = 5             # Candles to look back for the RSI exhaustion dip
@@ -50,9 +49,9 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
             return False
         return indicators.ema_50 < indicators.ema_100 < indicators.ema_200
 
-    def _price_tags_ema50(self, candle: Candle, ema_50: float) -> bool:
+    def _price_tags_ema50(self, candle: Candle, ema_50: float, atr: float) -> bool:
         """Check if the candle's low (for longs) or high (for shorts) tagged the 50 EMA."""
-        tolerance = ema_50 * self.EMA_TAG_TOLERANCE
+        tolerance = atr * 0.20
         # For longs: candle low touches or dips slightly below EMA 50
         low_tags = abs(candle.low - ema_50) <= tolerance or candle.low <= ema_50
         # For shorts: candle high touches or slightly exceeds EMA 50
@@ -62,18 +61,16 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
     def _rsi_hooked_bullish(self, candles: list[Candle], indicators: Indicators) -> bool:
         """
         Check if RSI recently dipped below the oversold threshold and is now
-        hooking back up. We need the series data, but since we only get the
-        latest snapshot, we approximate by checking current RSI > threshold
-        while recent candles showed bearish pressure (proxy for the dip).
+        hooking back up within the RSI_LOOKBACK window.
         """
-        if not indicators.rsi_14 or not indicators.prev_rsi_14:
+        if not indicators.rsi_14 or not indicators.prev_rsi_14 or not indicators.rsi_14_history:
             return False
 
         # Current RSI must be recovering (above threshold) and rising
         current_rising = indicators.rsi_14 > indicators.prev_rsi_14
 
-        # Previous RSI was near or below the threshold (exhaustion happened)
-        prev_was_exhausted = indicators.prev_rsi_14 < self.RSI_OVERSOLD_THRESHOLD + 5
+        # Was the RSI at or below the threshold at any point in the lookback window?
+        prev_was_exhausted = any(val < self.RSI_OVERSOLD_THRESHOLD + 5 for val in indicators.rsi_14_history)
 
         # Current RSI shouldn't be overbought already
         not_overbought = indicators.rsi_14 < 65
@@ -82,11 +79,11 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
 
     def _rsi_hooked_bearish(self, candles: list[Candle], indicators: Indicators) -> bool:
         """Check if RSI recently spiked above overbought and is now hooking down."""
-        if not indicators.rsi_14 or not indicators.prev_rsi_14:
+        if not indicators.rsi_14 or not indicators.prev_rsi_14 or not indicators.rsi_14_history:
             return False
 
         current_falling = indicators.rsi_14 < indicators.prev_rsi_14
-        prev_was_exhausted = indicators.prev_rsi_14 > self.RSI_OVERBOUGHT_THRESHOLD - 5
+        prev_was_exhausted = any(val > self.RSI_OVERBOUGHT_THRESHOLD - 5 for val in indicators.rsi_14_history)
         not_oversold = indicators.rsi_14 > 35
 
         return current_falling and prev_was_exhausted and not_oversold
@@ -100,7 +97,7 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
         # ═══════ LONG Setup ═══════
         if self._check_ema_alignment_bullish(indicators):
             # Confluence 2: Price must tag the 50 EMA
-            if indicators.ema_50 and self._price_tags_ema50(current, indicators.ema_50):
+            if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14):
                 # For longs, price low should be near/at EMA 50, close should be above
                 if current.close > indicators.ema_50:
                     # Confluence 3: RSI momentum hook
@@ -143,7 +140,7 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
 
         # ═══════ SHORT Setup ═══════
         if self._check_ema_alignment_bearish(indicators):
-            if indicators.ema_50 and self._price_tags_ema50(current, indicators.ema_50):
+            if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14):
                 if current.close < indicators.ema_50:
                     if self._rsi_hooked_bearish(candles, indicators):
                         confidence = 0.65

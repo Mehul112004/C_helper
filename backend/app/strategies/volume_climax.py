@@ -29,12 +29,18 @@ class VolumeClimaxStrategy(BaseStrategy):
         volume_ratio = current_candle.volume / indicators.volume_ma_20
             
         # Check for Capitulation / Stopping Volume (Bullish Reversal)
-        # Must occur after a downtrend (last 2 of 4 candles bearish)
-        recent_bearish = sum(1 for c in candles[-5:-1] if c.is_bearish)
-        if recent_bearish >= 2:
+        # Check against EMA_50 to ensure we are actually extended
+        if not indicators.ema_50: return None
+
+        # Price must be extended at least 1% below the 50 EMA to be a capitulation
+        is_extended_down = current_candle.close < (indicators.ema_50 * 0.99)
+        # Require a sustained downtrend (9 out of 15 candles bearish)
+        bearish_momentum = sum(1 for c in candles[-15:-1] if c.is_bearish) >= 9
+
+        if is_extended_down and bearish_momentum:
             # The climax candle should have a long lower wick or be a small-bodied reversal candle
             has_reversal_pattern = (
-                current_candle.lower_wick > current_candle.body_size * 1.5 or 
+                current_candle.lower_wick > current_candle.body_size * 1.5 or
                 current_candle.body_size < current_candle.range_size * 0.35
             )
             if has_reversal_pattern:
@@ -72,12 +78,15 @@ class VolumeClimaxStrategy(BaseStrategy):
                 )
 
         # Check for Climax Buying (Bearish Reversal)
-        # Must occur after an uptrend (last 2 of 4 candles bullish)
-        recent_bullish = sum(1 for c in candles[-5:-1] if c.is_bullish)
-        if recent_bullish >= 2:
+        # Price must be extended at least 1% above the 50 EMA
+        is_extended_up = current_candle.close > (indicators.ema_50 * 1.01)
+        # Require a sustained uptrend (9 out of 15 candles bullish)
+        bullish_momentum = sum(1 for c in candles[-15:-1] if c.is_bullish) >= 9
+
+        if is_extended_up and bullish_momentum:
             # The climax candle should have a long upper wick or be a small-bodied exhaustive candle
             has_exhaustion_pattern = (
-                current_candle.upper_wick > current_candle.body_size * 1.5 or 
+                current_candle.upper_wick > current_candle.body_size * 1.5 or
                 current_candle.body_size < current_candle.range_size * 0.35
             )
             if has_exhaustion_pattern:
@@ -119,9 +128,9 @@ class VolumeClimaxStrategy(BaseStrategy):
     def calculate_sl(self, signal, candles, atr):
         """Structural SL: Behind the climax candle's wick — the invalidation point."""
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.1 * atr), 8)
+            return round(candles[-1].low - (0.5 * atr), 8)
         else:
-            return round(candles[-1].high + (0.1 * atr), 8)
+            return round(candles[-1].high + (0.5 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: 1.5R and 3.0R from structural stop."""

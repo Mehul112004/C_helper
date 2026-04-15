@@ -270,7 +270,7 @@ class TestBaseStrategy:
         assert strategy.name == "Test Strategy"
 
     def test_default_sl_long(self):
-        """Default SL for LONG: entry - 1.5 × ATR."""
+        """Default SL for LONG: recent low - 0.2 × ATR."""
         class TestStrategy(BaseStrategy):
             name = "Test"
             def scan(self, symbol, timeframe, candles, indicators, sr_zones):
@@ -283,10 +283,10 @@ class TestBaseStrategy:
         )
         candle = Candle(datetime(2025, 1, 1), 99.0, 101.0, 98.0, 100.0, 1000.0)
         sl = strategy.calculate_sl(signal, [candle], atr=10.0)
-        assert sl == 85.0  # 100 - 1.5 * 10
+        assert sl == 96.0  # 98.0 (low) - 0.2 * 10
 
     def test_default_sl_short(self):
-        """Default SL for SHORT: entry + 1.5 × ATR."""
+        """Default SL for SHORT: recent high + 0.2 × ATR."""
         class TestStrategy(BaseStrategy):
             name = "Test"
             def scan(self, symbol, timeframe, candles, indicators, sr_zones):
@@ -299,10 +299,10 @@ class TestBaseStrategy:
         )
         candle = Candle(datetime(2025, 1, 1), 101.0, 102.0, 99.0, 100.0, 1000.0)
         sl = strategy.calculate_sl(signal, [candle], atr=10.0)
-        assert sl == 115.0  # 100 + 1.5 * 10
+        assert sl == 104.0  # 102.0 (high) + 0.2 * 10
 
     def test_default_tp_long(self):
-        """Default TP for LONG: TP1 = 2×ATR, TP2 = 3.5×ATR from entry."""
+        """Default TP for LONG: 1.5R and 3.0R from structural SL."""
         class TestStrategy(BaseStrategy):
             name = "Test"
             def scan(self, symbol, timeframe, candles, indicators, sr_zones):
@@ -315,11 +315,11 @@ class TestBaseStrategy:
         )
         candle = Candle(datetime(2025, 1, 1), 99.0, 101.0, 98.0, 100.0, 1000.0)
         tp1, tp2 = strategy.calculate_tp(signal, [candle], atr=10.0)
-        assert tp1 == 120.0  # 100 + 2 * 10
-        assert tp2 == 135.0  # 100 + 3.5 * 10
+        assert tp1 == 106.0  # risk = 100 - 96 = 4. tp1 = 100 + 1.5 * 4
+        assert tp2 == 112.0  # tp2 = 100 + 3 * 4
 
     def test_default_tp_short(self):
-        """Default TP for SHORT: TP1 = entry - 2×ATR, TP2 = entry - 3.5×ATR."""
+        """Default TP for SHORT: 1.5R and 3.0R from structural SL."""
         class TestStrategy(BaseStrategy):
             name = "Test"
             def scan(self, symbol, timeframe, candles, indicators, sr_zones):
@@ -332,8 +332,8 @@ class TestBaseStrategy:
         )
         candle = Candle(datetime(2025, 1, 1), 101.0, 102.0, 99.0, 100.0, 1000.0)
         tp1, tp2 = strategy.calculate_tp(signal, [candle], atr=10.0)
-        assert tp1 == 80.0   # 100 - 2 * 10
-        assert tp2 == 65.0   # 100 - 3.5 * 10
+        assert tp1 == 94.0   # risk = 104 - 100 = 4. tp1 = 100 - 1.5 * 4
+        assert tp2 == 88.0   # tp2 = 100 - 3 * 4
 
     def test_should_confirm_with_llm_default(self):
         """Default should_confirm_with_llm returns True."""

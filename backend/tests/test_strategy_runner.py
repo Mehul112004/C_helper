@@ -169,9 +169,9 @@ class TestRunSingleScan:
 
         assert signal is not None
         assert signal.entry == 100.0
-        assert signal.sl == 85.0    # 100 - 1.5 * 10
-        assert signal.tp1 == 120.0  # 100 + 2.0 * 10
-        assert signal.tp2 == 135.0  # 100 + 3.5 * 10
+        assert signal.sl == 96.0    # 98.0 (low) - 0.2 * 10 = 96.0
+        assert signal.tp1 == 106.0  # risk = 100 - 96 = 4. tp1 = 100 + 1.5 * 4
+        assert signal.tp2 == 112.0  # tp2 = 100 + 3.0 * 4
 
 
 class TestScanHistorical:

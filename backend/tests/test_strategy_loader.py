@@ -19,10 +19,10 @@ class TestStrategyRegistry:
         reg.load_builtin_strategies()
         return reg
 
-    def test_load_discovers_all_6(self, registry):
-        """Registry should find all 6 built-in strategies."""
+    def test_load_discovers_all(self, registry):
+        """Registry should find all 12 built-in strategies."""
         all_strategies = registry.get_all()
-        assert len(all_strategies) == 6
+        assert len(all_strategies) == 12
 
         names = {s['name'] for s in all_strategies}
         expected = {
@@ -32,6 +32,12 @@ class TestStrategyRegistry:
             "MACD Momentum",
             "S/R Zone Rejection",
             "S/R Zone Breakout",
+            "FVG Mitigation",
+            "Volume Climax",
+            "Trend Pullback Confluence",
+            "SMC Liquidity Sweep",
+            "SMC Structure Shift",
+            "Order Block Retest",
         }
         assert names == expected
 
@@ -79,7 +85,7 @@ class TestStrategyRegistry:
 
         assert "EMA Crossover" not in enabled_names
         assert "RSI Reversal" not in enabled_names
-        assert len(enabled) == 4
+        assert len(enabled) == 10
 
     def test_all_strategies_have_timeframes(self, registry):
         """Every strategy should declare at least one timeframe."""

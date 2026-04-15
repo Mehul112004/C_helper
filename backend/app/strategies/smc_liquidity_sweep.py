@@ -182,11 +182,11 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
 
     def calculate_sl(self, signal, candles, atr):
         """Structural SL: Placed strictly just beyond the sweep candle's wick."""
-        # We use a tiny 0.1 ATR buffer strictly for spread/slippage
+        # We use a tiny 0.5 ATR buffer strictly for spread/slippage
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.1 * atr), 8)
+            return round(candles[-1].low - (0.5 * atr), 8)
         else:
-            return round(candles[-1].high + (0.1 * atr), 8)
+            return round(candles[-1].high + (0.5 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: Scales dynamically based on the size of the sweep wick."""

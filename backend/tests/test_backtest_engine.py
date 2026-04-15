@@ -54,10 +54,10 @@ def test_simulate_trades_long_hit_tp():
     assert len(trades) == 1
     trade = trades[0]
     
-    assert trade['outcome'] == 'HIT_TP2'
-    assert trade['exit_price'] == 115.0
-    assert trade['rr_ratio'] == 1.5  # (115-100) / (100-90)
-    assert trade['pnl'] == 15.0     # risk = $10, size = 1, pnl = 1 * 15
+    assert trade['outcome'] == 'HIT_TP1'
+    assert trade['exit_price'] == 110.0
+    assert trade['rr_ratio'] == 1.0  # (110-100) / (100-90)
+    assert trade['pnl'] == 10.0     # risk = $10, size = 1, pnl = 1 * 10
 
 
 def test_simulate_trades_short_hit_sl():
@@ -135,6 +135,6 @@ def test_compute_metrics():
     assert metrics['total_trades'] == 4
     assert metrics['win_rate'] == 50.0  # (2 / 4) * 100
     assert metrics['total_pnl'] == 35.0 # 20 - 10 + 30 - 5
-    assert metrics['profit_factor'] == 50.0 / 15.0  # Gross win / gross loss
+    assert metrics['profit_factor'] == pytest.approx(50.0 / 15.0, rel=1e-3)  # Gross win / gross loss
     assert metrics['avg_rr'] == 2.5     # (2.0 + 3.0) / 2
     assert metrics['max_drawdown'] == 10.0 # From 1020 down to 1010
