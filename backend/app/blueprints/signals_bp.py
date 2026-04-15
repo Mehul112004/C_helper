@@ -119,6 +119,37 @@ def list_confirmed_signals():
         
     return jsonify({'signals': signals_list, 'count': len(signals_list)}), 200
 
+
+@signals_bp.route('/export/confirmed', methods=['GET'])
+def export_confirmed_signals():
+    """
+    Export all confirmed signals up to today as a JSON file,
+    excluding telegram specific fields.
+    """
+    from app.models.db import ConfirmedSignal
+    from datetime import datetime
+
+    signals = ConfirmedSignal.query.order_by(ConfirmedSignal.created_at.desc()).all()
+    
+    export_data = []
+    for sig in signals:
+        sig_dict = sig.to_dict()
+        # Remove telegram specifics
+        sig_dict.pop('telegram_status', None)
+        sig_dict.pop('telegram_retries', None)
+        sig_dict.pop('telegram_message_id', None)
+        export_data.append(sig_dict)
+
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    filename = f"{current_date}-confirmed-signals.json"
+
+    return Response(
+        json.dumps(export_data, indent=2),
+        mimetype="application/json",
+        headers={"Content-disposition": f"attachment; filename={filename}"}
+    )
+
+
 @signals_bp.route('/lm-studio-status', methods=['GET'])
 def lm_studio_status():
     """
