@@ -21,7 +21,12 @@ def list_strategies():
         JSON with list of strategy objects and count.
     """
     from app.core.strategy_loader import registry
-    strategies = registry.get_all()
+    all_strategies = registry.get_all()
+    
+    # Filter out strategies that should not be shown in the UI
+    hidden_strategies = {"MACD Momentum", "RSI Reversal"}
+    strategies = [s for s in all_strategies if s['name'] not in hidden_strategies]
+    
     return jsonify({'strategies': strategies, 'count': len(strategies)}), 200
 
 

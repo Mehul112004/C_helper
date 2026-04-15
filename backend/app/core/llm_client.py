@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 # Config
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
-LM_STUDIO_MODEL = "meta-llama-3.1-8b-instruct"
-REQUEST_TIMEOUT = 60  # seconds — tight timeout for live trading responsiveness
+LM_STUDIO_MODEL = "google/gemma-4-e4b"
+REQUEST_TIMEOUT = 200  # seconds — tight timeout for live trading responsiveness
 
 # Minimum confidence score from LLM to allow a CONFIRM verdict
 LLM_CONFIDENCE_THRESHOLD = 4
@@ -148,16 +148,15 @@ class LLMClient:
             "model": LM_STUDIO_MODEL,
             "messages": [
                 {"role": "system", "content": (
-                    "You are a quantitative trading risk manager. Output ONLY valid JSON. "
-                    "No markdown, no explanation outside the JSON. "
-                    "IMPORTANT: Write your reasoning FIRST before deciding the verdict. "
-                    "Only reference data that is explicitly provided. Never invent indicators or patterns. "
-                    "CRITICAL: Do NOT use newlines (\\n) or carriage returns inside JSON string values. Write reasoning as a single continuous paragraph."
+                    "You are a quantitative trading risk manager. "
+                    "You may use your internal reasoning capabilities first. "
+                    "However, your final, conclusive output MUST be a valid JSON object matching the requested schema. "
+                    "CRITICAL: Do NOT use newlines (\\n) inside JSON string values. Write the JSON reasoning key as a single paragraph."
                 )},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2, # Deterministic reasoning
-            "max_tokens": 500, # Increased to accommodate chain-of-thought reasoning
+            "max_tokens": 2500, # INCREASED: Gives ~2000 tokens for <think> and 500 for the JSON
             "stream": False
         }
 

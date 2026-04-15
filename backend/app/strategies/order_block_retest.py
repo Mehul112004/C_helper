@@ -45,7 +45,7 @@ class OrderBlockRetestStrategy(BaseStrategy):
                 # Check if the FVG has been mitigated (price returned and filled it)
                 # by any candle after the FVG formation up to now
                 mitigated = False
-                for k in range(j + 1, len(candles)):
+                for k in range(j + 1, len(candles) - 1):
                     if candles[k].low <= fvg_bottom:
                         mitigated = True
                         break
@@ -68,7 +68,7 @@ class OrderBlockRetestStrategy(BaseStrategy):
                 fvg_bottom = c_after.high
 
                 mitigated = False
-                for k in range(j + 1, len(candles)):
+                for k in range(j + 1, len(candles) - 1):
                     if candles[k].high >= fvg_top:
                         mitigated = True
                         break

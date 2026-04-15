@@ -272,20 +272,29 @@ class SMCStructureShiftStrategy(BaseStrategy):
         return None
 
     def calculate_sl(self, signal, candles, atr):
-        """SL beyond the broken structure level + buffer."""
-        entry = signal.entry or candles[-1].close
+        """Structural SL: Behind the recent swing point that caused the shift."""
+        # Look back 20 candles to find the origin of the breakout impulse
+        recent_history = candles[-20:]
+
         if signal.direction == "LONG":
-            return round(entry - (2.0 * atr), 8)
+            # SL goes below the lowest low of the structure forming the breakout
+            structural_low = min(c.low for c in recent_history)
+            return round(structural_low - (0.5 * atr), 8)
         else:
-            return round(entry + (2.0 * atr), 8)
+            # SL goes above the highest high of the structure forming the breakdown
+            structural_high = max(c.high for c in recent_history)
+            return round(structural_high + (0.5 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
-        """TP1 at 2.5x ATR, TP2 at 4.5x ATR — wider for HTF structure plays."""
+        """Risk-based TP: 2.0R and 4.0R from structural stop."""
         entry = signal.entry or candles[-1].close
+        sl = self.calculate_sl(signal, candles, atr)
+        risk = abs(entry - sl)
+        risk = max(risk, atr * 0.1)
         if signal.direction == "LONG":
-            return (round(entry + 2.5 * atr, 8), round(entry + 4.5 * atr, 8))
+            return (round(entry + (2.0 * risk), 8), round(entry + (4.0 * risk), 8))
         else:
-            return (round(entry - 2.5 * atr, 8), round(entry - 4.5 * atr, 8))
+            return (round(entry - (2.0 * risk), 8), round(entry - (4.0 * risk), 8))
 
     def should_confirm_with_llm(self, signal):
         return True
