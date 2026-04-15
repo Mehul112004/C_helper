@@ -20,6 +20,7 @@ Swing Detection:
   with configurable pivot bar count for confirmed swing highs/lows.
 """
 
+from app.core.fractals import build_swing_map
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 
 
@@ -49,52 +50,6 @@ class FibonacciRetracementStrategy(BaseStrategy):
 
     # Rejection candle requirements
     MIN_WICK_TO_BODY_RATIO = 0.8  # Wick must be ≥ 80% of body size
-
-    # ── Swing Detection (reused from SMCStructureShiftStrategy) ──────────
-
-    def _find_swings(self, candles: list[Candle], pivot_n: int) -> list[dict]:
-        """
-        Build an ordered list of swing points using fractal pivot detection.
-
-        A swing high: candle[i].high is strictly greater than the high of all
-        candles within ±pivot_n bars.
-        A swing low: candle[i].low is strictly less than the low of all
-        candles within ±pivot_n bars.
-
-        Returns list of {'type': 'high'|'low', 'price': float, 'index': int}
-        sorted chronologically by index.
-
-        Algorithm identical to SMCStructureShiftStrategy._find_swings().
-        """
-        swing_highs = []
-        swing_lows = []
-
-        for i in range(pivot_n, len(candles) - pivot_n):
-            # Swing High
-            is_sh = all(
-                candles[i].high > candles[i - j].high and candles[i].high > candles[i + j].high
-                for j in range(1, pivot_n + 1)
-            )
-            if is_sh:
-                swing_highs.append({'price': candles[i].high, 'index': i})
-
-            # Swing Low
-            is_sl = all(
-                candles[i].low < candles[i - j].low and candles[i].low < candles[i + j].low
-                for j in range(1, pivot_n + 1)
-            )
-            if is_sl:
-                swing_lows.append({'price': candles[i].low, 'index': i})
-
-        # Merge and sort chronologically
-        swings = []
-        for sh in swing_highs:
-            swings.append({'type': 'high', 'price': sh['price'], 'index': sh['index']})
-        for sl in swing_lows:
-            swings.append({'type': 'low', 'price': sl['price'], 'index': sl['index']})
-        swings.sort(key=lambda s: s['index'])
-
-        return swings
 
     # ── Fibonacci Level Computation ──────────────────────────────────────
 
@@ -187,7 +142,8 @@ class FibonacciRetracementStrategy(BaseStrategy):
 
         # Build swing map from the lookback window
         window = candles[-(self.SWING_LOOKBACK + self.PIVOT_BARS):]
-        swings = self._find_swings(window, self.PIVOT_BARS)
+        swings = build_swing_map(window, self.PIVOT_BARS)
+
 
         if len(swings) < 2:
             return None
@@ -379,24 +335,28 @@ class FibonacciRetracementStrategy(BaseStrategy):
         )
 
     # ── SL / TP ──────────────────────────────────────────────────────────
-
     def calculate_sl(self, signal, candles, atr):
-        """Structural SL: Behind the rejection candle's wick + 0.5 ATR buffer."""
+        """
+        Fallback SL computation. The primary SL should be computed
+        at scan time and attached to signal.sl based on the Fib 78.6% level.
+        If missing, falls back to structural wick + 0.5 ATR.
+        """
+        if signal.sl is not None:
+            return signal.sl
+            
         if signal.direction == "LONG":
             return round(candles[-1].low - (0.5 * atr), 8)
         else:
             return round(candles[-1].high + (0.5 * atr), 8)
-
     def calculate_tp(self, signal, candles, atr):
-        """Risk-based TP: 1.5R and 3.0R from structural stop."""
+        """Risk-based TP: 1.5R and 3.0R from the structural stop (78.6% level)."""
         entry = signal.entry or candles[-1].close
-        sl = self.calculate_sl(signal, candles, atr)
+        sl = signal.sl if signal.sl is not None else self.calculate_sl(signal, candles, atr)
         risk = abs(entry - sl)
         risk = max(risk, atr * 0.1)
         if signal.direction == "LONG":
             return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
         else:
             return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
-
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         return True

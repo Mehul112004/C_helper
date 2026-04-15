@@ -17,6 +17,7 @@ Safeguards:
     before any signal can fire.
 """
 
+from app.core.fractals import build_swing_map
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 
 
@@ -33,44 +34,6 @@ class SMCStructureShiftStrategy(BaseStrategy):
 
     LOOKBACK = 40
     PIVOT_BARS = 3    # Bars on each side for swing detection
-
-    def _find_swings(self, candles: list[Candle], pivot_n: int) -> list[dict]:
-        """
-        Build an ordered list of swing points:
-        [{'type': 'HH'|'HL'|'LH'|'LL', 'price': float, 'index': int}, ...]
-
-        Uses fractal pivot detection, then labels each swing relative
-        to the previous swing of the same type.
-        """
-        swing_highs = []
-        swing_lows = []
-
-        for i in range(pivot_n, len(candles) - pivot_n):
-            # Swing High
-            is_sh = all(
-                candles[i].high > candles[i - j].high and candles[i].high > candles[i + j].high
-                for j in range(1, pivot_n + 1)
-            )
-            if is_sh:
-                swing_highs.append({'price': candles[i].high, 'index': i})
-
-            # Swing Low
-            is_sl = all(
-                candles[i].low < candles[i - j].low and candles[i].low < candles[i + j].low
-                for j in range(1, pivot_n + 1)
-            )
-            if is_sl:
-                swing_lows.append({'price': candles[i].low, 'index': i})
-
-        # Merge and sort chronologically
-        swings = []
-        for sh in swing_highs:
-            swings.append({'type': 'high', 'price': sh['price'], 'index': sh['index']})
-        for sl in swing_lows:
-            swings.append({'type': 'low', 'price': sl['price'], 'index': sl['index']})
-        swings.sort(key=lambda s: s['index'])
-
-        return swings
 
     def _determine_trend(self, swings: list[dict]) -> str:
         """
@@ -112,7 +75,7 @@ class SMCStructureShiftStrategy(BaseStrategy):
 
         window = candles[-(self.LOOKBACK + self.PIVOT_BARS):]
         current = candles[-1]
-        swings = self._find_swings(window, self.PIVOT_BARS)
+        swings = build_swing_map(window, self.PIVOT_BARS)
 
         if len(swings) < 4:
             return None

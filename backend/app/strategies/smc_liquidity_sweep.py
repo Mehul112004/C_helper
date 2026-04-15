@@ -14,6 +14,7 @@ Safeguards:
 """
 
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from app.core.fractals import find_fractal_points
 
 
 class SMCLiquiditySweepStrategy(BaseStrategy):
@@ -33,40 +34,6 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
     COOLDOWN_CANDLES = 4    # Suppress re-fire if price lingers near swept level
     SWEEP_TOLERANCE = 0.001 # 0.1% — wick must exceed level by at least this ratio
 
-    def _find_fractal_highs(self, candles: list[Candle], pivot_n: int) -> list[tuple[int, float]]:
-        """
-        Find fractal highs: candle[i].high is the highest of
-        candle[i-pivot_n] ... candle[i+pivot_n].
-        Returns list of (index, price) tuples.
-        """
-        fractals = []
-        for i in range(pivot_n, len(candles) - pivot_n):
-            is_pivot = True
-            for j in range(1, pivot_n + 1):
-                if candles[i].high <= candles[i - j].high or candles[i].high <= candles[i + j].high:
-                    is_pivot = False
-                    break
-            if is_pivot:
-                fractals.append((i, candles[i].high))
-        return fractals
-
-    def _find_fractal_lows(self, candles: list[Candle], pivot_n: int) -> list[tuple[int, float]]:
-        """
-        Find fractal lows: candle[i].low is the lowest of
-        candle[i-pivot_n] ... candle[i+pivot_n].
-        Returns list of (index, price) tuples.
-        """
-        fractals = []
-        for i in range(pivot_n, len(candles) - pivot_n):
-            is_pivot = True
-            for j in range(1, pivot_n + 1):
-                if candles[i].low >= candles[i - j].low or candles[i].low >= candles[i + j].low:
-                    is_pivot = False
-                    break
-            if is_pivot:
-                fractals.append((i, candles[i].low))
-        return fractals
-
     def scan(self, symbol, timeframe, candles, indicators, sr_zones):
         if len(candles) < self.LOOKBACK + self.PIVOT_BARS:
             return None
@@ -76,8 +43,7 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
 
         # Map fractals from the window (exclude the most recent PIVOT_BARS candles
         # because they can't form a confirmed pivot yet)
-        fractal_highs = self._find_fractal_highs(window[:-1], self.PIVOT_BARS)
-        fractal_lows = self._find_fractal_lows(window[:-1], self.PIVOT_BARS)
+        fractal_highs, fractal_lows = find_fractal_points(window[:-1], self.PIVOT_BARS)
 
         # --- Bearish Sweep (wick above fractal high, close back below) → SHORT ---
         if fractal_highs:
