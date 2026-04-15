@@ -32,8 +32,8 @@ class VolumeClimaxStrategy(BaseStrategy):
         # Check against EMA_50 to ensure we are actually extended
         if not indicators.ema_50: return None
 
-        # Price must be extended at least 1% below the 50 EMA to be a capitulation
-        is_extended_down = current_candle.close < (indicators.ema_50 * 0.99)
+        # Price must be extended at least 2.5% below the 50 EMA to be a capitulation
+        is_extended_down = current_candle.close < (indicators.ema_50 * 0.975)
         # Require a sustained downtrend (9 out of 15 candles bearish)
         bearish_momentum = sum(1 for c in candles[-15:-1] if c.is_bearish) >= 9
 
@@ -46,8 +46,8 @@ class VolumeClimaxStrategy(BaseStrategy):
             if has_reversal_pattern:
                 confidence = 0.60
                 
-                # +0.15 if RSI oversold (< 40)
-                if indicators.rsi_14 and indicators.rsi_14 < 40:
+                # +0.15 if RSI oversold (< 30)
+                if indicators.rsi_14 and indicators.rsi_14 < 30:
                     confidence += 0.15
                 
                 # +0.10 for extreme volume (3x+ MA)
@@ -78,8 +78,8 @@ class VolumeClimaxStrategy(BaseStrategy):
                 )
 
         # Check for Climax Buying (Bearish Reversal)
-        # Price must be extended at least 1% above the 50 EMA
-        is_extended_up = current_candle.close > (indicators.ema_50 * 1.01)
+        # Price must be extended at least 2.5% above the 50 EMA
+        is_extended_up = current_candle.close > (indicators.ema_50 * 1.025)
         # Require a sustained uptrend (9 out of 15 candles bullish)
         bullish_momentum = sum(1 for c in candles[-15:-1] if c.is_bullish) >= 9
 
@@ -92,8 +92,8 @@ class VolumeClimaxStrategy(BaseStrategy):
             if has_exhaustion_pattern:
                 confidence = 0.60
                 
-                # +0.15 if RSI overbought (> 60)
-                if indicators.rsi_14 and indicators.rsi_14 > 60:
+                # +0.15 if RSI overbought (> 70)
+                if indicators.rsi_14 and indicators.rsi_14 > 70:
                     confidence += 0.15
                 
                 # +0.10 for extreme volume (3x+ MA)

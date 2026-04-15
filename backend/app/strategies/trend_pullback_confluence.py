@@ -53,21 +53,20 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
             return False
         return indicators.ema_50 < indicators.ema_100 < indicators.ema_200
 
-    def _price_tags_ema50(self, candle: Candle, ema_50: float, atr: float) -> bool:
+    def _price_tags_ema50(self, candle: Candle, ema_50: float, atr: float, direction: str) -> bool:
         """Check if the candle's low (for longs) or high (for shorts) tagged the 50 EMA."""
         tolerance = atr * 0.20
-        # For longs: candle low touches or dips slightly below EMA 50
-        low_tags = abs(candle.low - ema_50) <= tolerance or candle.low <= ema_50
-        # For shorts: candle high touches or slightly exceeds EMA 50
-        high_tags = abs(candle.high - ema_50) <= tolerance or candle.high >= ema_50
-        return low_tags or high_tags
+        if direction == "LONG":
+            return candle.low <= (ema_50 + tolerance)
+        else:
+            return candle.high >= (ema_50 - tolerance)
 
     def _rsi_hooked_bullish(self, candles: list[Candle], indicators: Indicators) -> bool:
         """
         Check if RSI recently dipped below the oversold threshold and is now
         hooking back up within the RSI_LOOKBACK window.
         """
-        if not indicators.rsi_14 or not indicators.prev_rsi_14 or not indicators.rsi_14_history:
+        if indicators.rsi_14 is None or indicators.prev_rsi_14 is None or not indicators.rsi_14_history:
             return False
 
         # Current RSI must be recovering (above threshold) and rising
@@ -83,7 +82,7 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
 
     def _rsi_hooked_bearish(self, candles: list[Candle], indicators: Indicators) -> bool:
         """Check if RSI recently spiked above overbought and is now hooking down."""
-        if not indicators.rsi_14 or not indicators.prev_rsi_14 or not indicators.rsi_14_history:
+        if indicators.rsi_14 is None or indicators.prev_rsi_14 is None or not indicators.rsi_14_history:
             return False
 
         current_falling = indicators.rsi_14 < indicators.prev_rsi_14
@@ -107,7 +106,7 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
         # ═══════ LONG Setup ═══════
         if self._check_ema_alignment_bullish(indicators):
             # Confluence 2: Price must tag the 50 EMA
-            if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14):
+            if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14, 'LONG'):
                 # For longs, price low should be near/at EMA 50, close should be above
                 if current.close > indicators.ema_50:
                     # Momentum filter: reject massive red marubozu that barely closed above
@@ -153,7 +152,7 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
 
         # ═══════ SHORT Setup ═══════
         if self._check_ema_alignment_bearish(indicators):
-            if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14):
+            if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14, 'SHORT'):
                 if current.close < indicators.ema_50:
                     # Momentum filter: reject massive green marubozu that barely closed below
                     if indicators.atr_14 and current.body_size >= (indicators.atr_14 * self.ATR_BODY_MULTIPLIER):

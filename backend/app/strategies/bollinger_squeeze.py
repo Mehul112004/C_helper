@@ -51,10 +51,8 @@ class BollingerSqueezeStrategy(BaseStrategy):
             return None
 
         # Step 2: Detect breakout direction
-        # Allow near-band touches (within 0.1% of band) as well as strict breakouts
-        band_tolerance = indicators.bb_upper * 0.001  # 0.1% tolerance
-        breakout_up = close >= (indicators.bb_upper - band_tolerance)
-        breakout_down = close <= (indicators.bb_lower + band_tolerance)
+        breakout_up = close >= indicators.bb_upper
+        breakout_down = close <= indicators.bb_lower
 
         if not breakout_up and not breakout_down:
             return None

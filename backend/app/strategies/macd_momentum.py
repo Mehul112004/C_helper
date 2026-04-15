@@ -13,7 +13,7 @@ from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 class MACDMomentumStrategy(BaseStrategy):
     name = "MACD Momentum"
     description = "MACD/signal cross with histogram confirmation"
-    timeframes = ["15m", "1h", "4h", "1d"]
+    timeframes = ["15m", "1h", "4h", "1D"]
     version = "1.1"
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones):
@@ -48,15 +48,6 @@ class MACDMomentumStrategy(BaseStrategy):
 
         # Confidence scoring
         confidence = 0.55
-
-        # +0.10 for momentum buildup: check if histogram was opposite for ≥2 bars
-        # We check via the candle history — looking for a momentum squeeze before the cross
-        if len(candles) >= 4:
-            # For bullish cross, histogram should have been negative for at least 2 prior bars
-            if bullish_cross and indicators.prev_macd_histogram < 0:
-                confidence += 0.10
-            elif bearish_cross and indicators.prev_macd_histogram > 0:
-                confidence += 0.10
 
         # +0.15 if EMA 50 aligns with direction
         if indicators.ema_50 is not None:

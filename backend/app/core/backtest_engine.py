@@ -57,6 +57,7 @@ class BacktestEngine:
         ema_9 = IndicatorService.compute_ema(closes, 9)
         ema_21 = IndicatorService.compute_ema(closes, 21)
         ema_50 = IndicatorService.compute_ema(closes, 50)
+        ema_100 = IndicatorService.compute_ema(closes, 100)
         ema_200 = IndicatorService.compute_ema(closes, 200)
         rsi_14 = IndicatorService.compute_rsi(closes, 14)
         macd = IndicatorService.compute_macd(closes, 12, 26, 9)
@@ -77,6 +78,7 @@ class BacktestEngine:
             'ema_9': _series_to_list(ema_9),
             'ema_21': _series_to_list(ema_21),
             'ema_50': _series_to_list(ema_50),
+            'ema_100': _series_to_list(ema_100),
             'ema_200': _series_to_list(ema_200),
             'rsi_14': _series_to_list(rsi_14),
             'macd_line': _series_to_list(macd['macd_line']),

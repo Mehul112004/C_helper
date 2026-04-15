@@ -85,15 +85,23 @@ class SMCStructureShiftStrategy(BaseStrategy):
         highs = [s for s in recent if s['type'] == 'high']
         lows = [s for s in recent if s['type'] == 'low']
 
-        if len(highs) >= 2 and len(lows) >= 2:
-            higher_highs = highs[-1]['price'] > highs[-2]['price'] if len(highs) >= 2 else False
-            higher_lows = lows[-1]['price'] > lows[-2]['price'] if len(lows) >= 2 else False
-            lower_highs = highs[-1]['price'] < highs[-2]['price'] if len(highs) >= 2 else False
-            lower_lows = lows[-1]['price'] < lows[-2]['price'] if len(lows) >= 2 else False
+        # Accelerating trends might only have one valid lower opposite swing point in the window
+        # We ensure there are at least 2 highs + lows in total and the direction aligns
+        if len(highs) + len(lows) >= 3:
+            higher_highs = highs[-1]['price'] > highs[-2]['price'] if len(highs) >= 2 else True
+            higher_lows = lows[-1]['price'] > lows[-2]['price'] if len(lows) >= 2 else True
+            lower_highs = highs[-1]['price'] < highs[-2]['price'] if len(highs) >= 2 else True
+            lower_lows = lows[-1]['price'] < lows[-2]['price'] if len(lows) >= 2 else True
+            
+            # Avoid cases where we assume True because len() < 2 but the existing ones contradict
+            has_hh = len(highs) >= 2 and higher_highs
+            has_hl = len(lows) >= 2 and higher_lows
+            has_lh = len(highs) >= 2 and lower_highs
+            has_ll = len(lows) >= 2 and lower_lows
 
-            if higher_highs and higher_lows:
+            if (has_hh and higher_lows) or (higher_highs and has_hl):
                 return 'bullish'
-            elif lower_highs and lower_lows:
+            elif (has_lh and lower_lows) or (lower_highs and has_ll):
                 return 'bearish'
 
         return 'neutral'
@@ -133,8 +141,8 @@ class SMCStructureShiftStrategy(BaseStrategy):
             # Body close must be above (not just wick)
             body_close_above = current.close > level and min(current.open, current.close) > level * 0.998
 
-            # Reject if only wick touched (body stayed below)
-            wick_only = current.high > level and current.close < level
+            # Reject if only wick touched (body stayed below or equal)
+            wick_only = current.high > level and max(current.open, current.close) <= level
 
             if body_close_above and not wick_only:
                 confidence = 0.65
@@ -170,7 +178,7 @@ class SMCStructureShiftStrategy(BaseStrategy):
             level = last_swing_low['price']
             body_close_below = current.close < level and max(current.open, current.close) < level * 1.002
 
-            wick_only = current.low < level and current.close > level
+            wick_only = current.low < level and min(current.open, current.close) >= level
 
             if body_close_below and not wick_only:
                 confidence = 0.65
@@ -203,7 +211,7 @@ class SMCStructureShiftStrategy(BaseStrategy):
         if trend == 'bearish' and last_swing_high:
             level = last_swing_high['price']
             body_close_above = current.close > level and min(current.open, current.close) > level * 0.998
-            wick_only = current.high > level and current.close < level
+            wick_only = current.high > level and max(current.open, current.close) <= level
 
             if body_close_above and not wick_only:
                 confidence = 0.60  # Slightly lower — reversal is riskier
@@ -234,7 +242,7 @@ class SMCStructureShiftStrategy(BaseStrategy):
         if trend == 'bullish' and last_swing_low:
             level = last_swing_low['price']
             body_close_below = current.close < level and max(current.open, current.close) < level * 1.002
-            wick_only = current.low < level and current.close > level
+            wick_only = current.low < level and min(current.open, current.close) >= level
 
             if body_close_below and not wick_only:
                 confidence = 0.60

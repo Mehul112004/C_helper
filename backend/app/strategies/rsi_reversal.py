@@ -24,11 +24,11 @@ class RSIReversalStrategy(BaseStrategy):
         prev_rsi = indicators.prev_rsi_14
         close = candles[-1].close
 
-        # Detect oversold reversal: RSI was < 35, now crosses above 35
-        oversold_reversal = prev_rsi < 35 and rsi >= 35
+        # Detect oversold reversal: RSI was < 30, now crosses above 30
+        oversold_reversal = prev_rsi < 30 and rsi >= 30
 
-        # Detect overbought reversal: RSI was > 65, now crosses below 65
-        overbought_reversal = prev_rsi > 65 and rsi <= 65
+        # Detect overbought reversal: RSI was > 70, now crosses below 70
+        overbought_reversal = prev_rsi > 70 and rsi <= 70
 
         if not oversold_reversal and not overbought_reversal:
             return None

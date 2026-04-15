@@ -85,7 +85,7 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
             _, level = fractal_highs[-1]
             sweep_threshold = level * (1 + self.SWEEP_TOLERANCE)
 
-            if current.high > level and current.close < level:
+            if current.high > sweep_threshold and current.close < level:
                 # Wick exceeded the level but body closed below → sweep
                 wick_above = current.high - level
                 body_top = max(current.open, current.close)
@@ -97,7 +97,7 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
                         1 for c in candles[-(self.COOLDOWN_CANDLES + 1):-1]
                         if abs(c.high - level) / level < self.SWEEP_TOLERANCE * 2
                     )
-                    if lingering < self.COOLDOWN_CANDLES:
+                    if lingering < 2:
                         confidence = 0.62
 
                         # +0.10 for strong rejection wick
@@ -135,7 +135,9 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
         if fractal_lows:
             _, level = fractal_lows[-1]
 
-            if current.low < level and current.close > level:
+            sweep_threshold = level * (1 - self.SWEEP_TOLERANCE)
+
+            if current.low < sweep_threshold and current.close > level:
                 wick_below = level - current.low
                 body_bottom = min(current.open, current.close)
 
@@ -144,7 +146,7 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
                         1 for c in candles[-(self.COOLDOWN_CANDLES + 1):-1]
                         if abs(c.low - level) / level < self.SWEEP_TOLERANCE * 2
                     )
-                    if lingering < self.COOLDOWN_CANDLES:
+                    if lingering < 2:
                         confidence = 0.62
 
                         # +0.10 for strong rejection wick
