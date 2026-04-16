@@ -240,6 +240,11 @@ class FibonacciRetracementStrategy(BaseStrategy):
         if indicators.ema_200 is not None and current.close > indicators.ema_200:
             confidence += 0.07
 
+        # EMA direction check: short-term trend must agree with LONG direction
+        if indicators.ema_9 is not None and indicators.ema_21 is not None:
+            if indicators.ema_9 < indicators.ema_21:
+                return None  # Short-term EMAs are bearish — abort bullish entry
+
         # +0.08 S/R zone confluence
         # Check if any S/R zone overlaps the golden pocket
         pocket_low = min(fib_50, fib_618)
@@ -310,6 +315,11 @@ class FibonacciRetracementStrategy(BaseStrategy):
         if indicators.ema_200 is not None and current.close < indicators.ema_200:
             confidence += 0.07
 
+        # EMA direction check: short-term trend must agree with SHORT direction
+        if indicators.ema_9 is not None and indicators.ema_21 is not None:
+            if indicators.ema_9 > indicators.ema_21:
+                return None  # Short-term EMAs are bullish — abort bearish entry
+
         # +0.08 S/R zone confluence
         pocket_low = min(fib_50, fib_618)
         pocket_high = max(fib_50, fib_618)
@@ -345,9 +355,9 @@ class FibonacciRetracementStrategy(BaseStrategy):
             return signal.sl
             
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.5 * atr), 8)
+            return round(candles[-1].low - (1.0 * atr), 8)
         else:
-            return round(candles[-1].high + (0.5 * atr), 8)
+            return round(candles[-1].high + (1.0 * atr), 8)
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: 1.5R and 3.0R from the structural stop (78.6% level)."""
         entry = signal.entry or candles[-1].close

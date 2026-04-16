@@ -75,6 +75,7 @@ class SMCStructureShiftStrategy(BaseStrategy):
 
         window = candles[-(self.LOOKBACK + self.PIVOT_BARS):]
         current = candles[-1]
+        atr = indicators.atr_14 or 0
         swings = build_swing_map(window, self.PIVOT_BARS)
 
         if len(swings) < 4:
@@ -123,6 +124,9 @@ class SMCStructureShiftStrategy(BaseStrategy):
                 if indicators.rsi_14 and 50 < indicators.rsi_14 < 75:
                     confidence += 0.07
 
+                # SL behind the opposite swing (last swing low) + 1.0 ATR
+                sl_price = round(last_swing_low['price'] - (1.0 * atr), 8) if atr > 0 else None
+
                 return SetupSignal(
                     strategy_name=self.name,
                     symbol=symbol,
@@ -130,9 +134,11 @@ class SMCStructureShiftStrategy(BaseStrategy):
                     direction="LONG",
                     confidence=min(confidence, 1.0),
                     entry=current.close,
+                    sl=sl_price,
                     notes=(
                         f"Bullish {signal_type}: body closed above swing high at {level:.2f}. "
-                        f"Trend: {trend}. Close: {current.close:.2f}."
+                        f"Trend: {trend}. Close: {current.close:.2f}. "
+                        f"SL ref: swing low {last_swing_low['price']:.2f}."
                     ),
                 )
 
@@ -156,6 +162,9 @@ class SMCStructureShiftStrategy(BaseStrategy):
                 if indicators.rsi_14 and 25 < indicators.rsi_14 < 50:
                     confidence += 0.07
 
+                # SL behind the opposite swing (last swing high) + 1.0 ATR
+                sl_price = round(last_swing_high['price'] + (1.0 * atr), 8) if atr > 0 else None
+
                 return SetupSignal(
                     strategy_name=self.name,
                     symbol=symbol,
@@ -163,9 +172,11 @@ class SMCStructureShiftStrategy(BaseStrategy):
                     direction="SHORT",
                     confidence=min(confidence, 1.0),
                     entry=current.close,
+                    sl=sl_price,
                     notes=(
                         f"Bearish {signal_type}: body closed below swing low at {level:.2f}. "
-                        f"Trend: {trend}. Close: {current.close:.2f}."
+                        f"Trend: {trend}. Close: {current.close:.2f}. "
+                        f"SL ref: swing high {last_swing_high['price']:.2f}."
                     ),
                 )
 
@@ -188,6 +199,9 @@ class SMCStructureShiftStrategy(BaseStrategy):
                 if indicators.rsi_14 and indicators.rsi_14 > 50:
                     confidence += 0.05
 
+                # ChoCh SL: behind the last swing low + 1.5 ATR (wider for reversals)
+                sl_price = round(last_swing_low['price'] - (1.5 * atr), 8) if atr > 0 else None
+
                 return SetupSignal(
                     strategy_name=self.name,
                     symbol=symbol,
@@ -195,9 +209,11 @@ class SMCStructureShiftStrategy(BaseStrategy):
                     direction="LONG",
                     confidence=min(confidence, 1.0),
                     entry=current.close,
+                    sl=sl_price,
                     notes=(
                         f"Bullish ChoCh: body broke above swing high at {level:.2f} "
-                        f"against prevailing bearish trend. Potential reversal."
+                        f"against prevailing bearish trend. Potential reversal. "
+                        f"SL ref: swing low {last_swing_low['price']:.2f}."
                     ),
                 )
 
@@ -219,6 +235,9 @@ class SMCStructureShiftStrategy(BaseStrategy):
                 if indicators.rsi_14 and indicators.rsi_14 < 50:
                     confidence += 0.05
 
+                # ChoCh SL: behind the last swing high + 1.5 ATR (wider for reversals)
+                sl_price = round(last_swing_high['price'] + (1.5 * atr), 8) if atr > 0 else None
+
                 return SetupSignal(
                     strategy_name=self.name,
                     symbol=symbol,
@@ -226,27 +245,29 @@ class SMCStructureShiftStrategy(BaseStrategy):
                     direction="SHORT",
                     confidence=min(confidence, 1.0),
                     entry=current.close,
+                    sl=sl_price,
                     notes=(
                         f"Bearish ChoCh: body broke below swing low at {level:.2f} "
-                        f"against prevailing bullish trend. Potential reversal."
+                        f"against prevailing bullish trend. Potential reversal. "
+                        f"SL ref: swing high {last_swing_high['price']:.2f}."
                     ),
                 )
 
         return None
 
     def calculate_sl(self, signal, candles, atr):
-        """Structural SL: Behind the recent swing point that caused the shift."""
-        # Look back 20 candles to find the origin of the breakout impulse
-        recent_history = candles[-20:]
+        """Structural SL: Uses the swing-level SL attached at scan time.
+        Falls back to 3-candle pivot + 1.0 ATR if signal.sl was not set."""
+        if signal.sl is not None:
+            return signal.sl
 
+        # Fallback: structural pivot + 1.0 ATR buffer
         if signal.direction == "LONG":
-            # SL goes below the lowest low of the structure forming the breakout
-            structural_low = min(c.low for c in recent_history)
-            return round(structural_low - (0.5 * atr), 8)
+            recent_low = min(c.low for c in candles[-5:])
+            return round(recent_low - (1.0 * atr), 8)
         else:
-            # SL goes above the highest high of the structure forming the breakdown
-            structural_high = max(c.high for c in recent_history)
-            return round(structural_high + (0.5 * atr), 8)
+            recent_high = max(c.high for c in candles[-5:])
+            return round(recent_high + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: 2.0R and 4.0R from structural stop."""

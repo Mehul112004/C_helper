@@ -77,6 +77,11 @@ class FVGMitigationStrategy(BaseStrategy):
 
         current_candle = candles[-1]
 
+        # ═══════ Exhaustion Guards ═══════
+        # Reject if the current candle body is overextended (> 2× ATR)
+        if indicators.atr_14 and current_candle.body_size > 2 * indicators.atr_14:
+            return None
+
         # Look for FVGs in the last 10 candles
         for i in range(len(candles) - 10, len(candles) - 1):
             if i < 2:
@@ -102,8 +107,14 @@ class FVGMitigationStrategy(BaseStrategy):
 
                 # Check if current price is inside the FVG (mitigating it)
                 if fvg_bottom <= current_candle.low <= fvg_top or fvg_bottom <= current_candle.close <= fvg_top:
-                    # We are in the gap. Check for bullish reversal sign
-                    if current_candle.is_bullish:
+                    # RSI exhaustion: already overbought → don't go LONG
+                    if indicators.rsi_14 is not None and indicators.rsi_14 > 75:
+                        continue
+
+                    # Require rejection candle: bullish + hammer/pin bar pattern
+                    if (current_candle.is_bullish
+                            and current_candle.range_size > 0
+                            and current_candle.lower_wick >= 0.6 * current_candle.range_size):
                         # ★ CONFLUENCE: Require an adjacent bullish Order Block ★
                         ob = self._has_adjacent_bullish_ob(candles, i - 2)
                         if ob is None:
@@ -157,7 +168,14 @@ class FVGMitigationStrategy(BaseStrategy):
                     continue  # Skip, this is a stale/dead FVG
 
                 if fvg_bottom <= current_candle.high <= fvg_top or fvg_bottom <= current_candle.close <= fvg_top:
-                    if current_candle.is_bearish:
+                    # RSI exhaustion: already oversold → don't go SHORT
+                    if indicators.rsi_14 is not None and indicators.rsi_14 < 25:
+                        continue
+
+                    # Require rejection candle: bearish + shooting star pattern
+                    if (current_candle.is_bearish
+                            and current_candle.range_size > 0
+                            and current_candle.upper_wick >= 0.6 * current_candle.range_size):
                         # ★ CONFLUENCE: Require an adjacent bearish Order Block ★
                         ob = self._has_adjacent_bearish_ob(candles, i - 2)
                         if ob is None:
@@ -196,9 +214,9 @@ class FVGMitigationStrategy(BaseStrategy):
     def calculate_sl(self, signal, candles, atr):
         """Structural SL: Behind the rejection candle's wick at the FVG zone."""
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.5 * atr), 8)
+            return round(candles[-1].low - (1.0 * atr), 8)
         else:
-            return round(candles[-1].high + (0.5 * atr), 8)
+            return round(candles[-1].high + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: 1.5R and 3.0R from structural stop."""

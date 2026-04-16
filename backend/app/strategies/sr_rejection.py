@@ -34,6 +34,10 @@ class SRRejectionStrategy(BaseStrategy):
         if candle.range_size <= 0:
             return None
 
+        # ═══════ Exhaustion Guards ═══════
+        if indicators.atr_14 and candle.body_size > 2 * indicators.atr_14:
+            return None
+
         # Check against each S/R zone
         for zone in sr_zones:
             strength = zone.get('strength_score', 0)
@@ -47,14 +51,21 @@ class SRRejectionStrategy(BaseStrategy):
 
             # --- Check for SUPPORT rejection (LONG) ---
             if zone_type in ('support', 'both'):
-                # Wick penetrates the zone: candle low goes into or below the zone
-                wick_entered = candle.low <= zone_upper
-                # But candle closes above the zone
+                # RSI exhaustion: already overbought → don't go LONG
+                if indicators.rsi_14 is not None and indicators.rsi_14 > 75:
+                    continue
+
+                # Wick must enter the zone from above (dip into it, not blow through entirely)
+                zone_width = zone_upper - zone_lower
+                wick_entered = candle.low <= zone_upper and candle.low >= zone_lower - zone_width
+                # Body must have started above the zone (not opened inside it)
+                body_above = min(candle.open, candle.close) > zone_upper
+                # Candle closes above the zone
                 closed_above = candle.close > zone_upper
                 # Pin bar pattern: lower wick is ≥ 60% of total range
                 lower_wick_ratio = candle.lower_wick / candle.range_size if candle.range_size > 0 else 0
 
-                if wick_entered and closed_above and lower_wick_ratio >= self.MIN_WICK_RATIO:
+                if wick_entered and body_above and closed_above and lower_wick_ratio >= self.MIN_WICK_RATIO:
                     signal = self._build_signal(
                         symbol, timeframe, candle, indicators, zone,
                         direction="LONG",
@@ -66,14 +77,21 @@ class SRRejectionStrategy(BaseStrategy):
 
             # --- Check for RESISTANCE rejection (SHORT) ---
             if zone_type in ('resistance', 'both'):
-                # Wick penetrates the zone: candle high goes into or above the zone
-                wick_entered = candle.high >= zone_lower
-                # But candle closes below the zone
+                # RSI exhaustion: already oversold → don't go SHORT
+                if indicators.rsi_14 is not None and indicators.rsi_14 < 25:
+                    continue
+
+                # Wick must enter the zone from below
+                zone_width = zone_upper - zone_lower
+                wick_entered = candle.high >= zone_lower and candle.high <= zone_upper + zone_width
+                # Body must have started below the zone
+                body_below = max(candle.open, candle.close) < zone_lower
+                # Candle closes below the zone
                 closed_below = candle.close < zone_lower
                 # Upper wick: shooting star pattern
                 upper_wick_ratio = candle.upper_wick / candle.range_size if candle.range_size > 0 else 0
 
-                if wick_entered and closed_below and upper_wick_ratio >= self.MIN_WICK_RATIO:
+                if wick_entered and body_below and closed_below and upper_wick_ratio >= self.MIN_WICK_RATIO:
                     signal = self._build_signal(
                         symbol, timeframe, candle, indicators, zone,
                         direction="SHORT",
@@ -123,9 +141,9 @@ class SRRejectionStrategy(BaseStrategy):
     def calculate_sl(self, signal, candles, atr):
         """Structural SL: Behind the rejection candle's wick + tiny buffer."""
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.5 * atr), 8)
+            return round(candles[-1].low - (1.0 * atr), 8)
         else:
-            return round(candles[-1].high + (0.5 * atr), 8)
+            return round(candles[-1].high + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: 2R and 3.5R from structural stop."""

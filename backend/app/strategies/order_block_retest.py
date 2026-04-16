@@ -84,6 +84,10 @@ class OrderBlockRetestStrategy(BaseStrategy):
 
         current_candle = candles[-1]
 
+        # ═══════ Exhaustion Guards ═══════
+        if indicators.atr_14 and current_candle.body_size > 2 * indicators.atr_14:
+            return None
+
         # Look back to find a valid order block (OB) created in the past 15 candles
         for i in range(len(candles) - 15, len(candles) - 3):
             if i < 0:
@@ -108,6 +112,10 @@ class OrderBlockRetestStrategy(BaseStrategy):
 
                         # Verify price has retraced to the OB
                         if ob_low <= current_candle.low <= ob_high or ob_low <= current_candle.close <= ob_high:
+                            # RSI exhaustion: already overbought → don't go LONG
+                            if indicators.rsi_14 is not None and indicators.rsi_14 > 75:
+                                continue
+
                             # Rejection condition: lower wick shows buying pressure
                             if current_candle.lower_wick > current_candle.body_size * 0.8:
                                 confidence = 0.67  # Higher base due to FVG confluence
@@ -156,6 +164,10 @@ class OrderBlockRetestStrategy(BaseStrategy):
                             continue
 
                         if ob_low <= current_candle.high <= ob_high or ob_low <= current_candle.close <= ob_high:
+                            # RSI exhaustion: already oversold → don't go SHORT
+                            if indicators.rsi_14 is not None and indicators.rsi_14 < 25:
+                                continue
+
                             if current_candle.upper_wick > current_candle.body_size * 0.8:
                                 confidence = 0.67
 
@@ -188,9 +200,9 @@ class OrderBlockRetestStrategy(BaseStrategy):
     def calculate_sl(self, signal, candles, atr):
         """Structural SL: Behind the rejection candle's wick at the OB zone."""
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.5 * atr), 8)
+            return round(candles[-1].low - (1.0 * atr), 8)
         else:
-            return round(candles[-1].high + (0.5 * atr), 8)
+            return round(candles[-1].high + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: 1.5R and 3.0R from structural stop."""

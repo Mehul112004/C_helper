@@ -292,14 +292,14 @@ class BaseStrategy(ABC):
     def calculate_sl(self, signal: SetupSignal, candles: list[Candle], atr: float) -> float:
         """
         Override to customize stop-loss calculation.
-        Default: Structural SL behind the recent 3-candle pivot + 0.2 ATR buffer.
+        Default: Structural SL behind the recent 3-candle pivot + 0.5 ATR buffer.
         """
         if signal.direction == "LONG":
             recent_low = min(c.low for c in candles[-3:])
-            return round(recent_low - (0.2 * atr), 8)
+            return round(recent_low - (0.5 * atr), 8)
         else:
             recent_high = max(c.high for c in candles[-3:])
-            return round(recent_high + (0.2 * atr), 8)
+            return round(recent_high + (0.5 * atr), 8)
 
     def calculate_tp(self, signal: SetupSignal, candles: list[Candle], atr: float) -> tuple:
         """

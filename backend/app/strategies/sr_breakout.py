@@ -53,7 +53,7 @@ class SRBreakoutStrategy(BaseStrategy):
 
             # --- LONG breakout: breaking above resistance ---
             if zone_type in ('resistance', 'both'):
-                if close > zone_upper and candle.is_bullish:
+                if close > zone_upper and candle.is_bullish and min(candle.open, candle.close) > zone_lower:
                     # Verify the previous candle was below or at the zone (actual breakout)
                     prev_candle = candles[-2]
                     if prev_candle.close <= zone_upper:
@@ -66,7 +66,7 @@ class SRBreakoutStrategy(BaseStrategy):
 
             # --- SHORT breakout: breaking below support ---
             if zone_type in ('support', 'both'):
-                if close < zone_lower and candle.is_bearish:
+                if close < zone_lower and candle.is_bearish and max(candle.open, candle.close) < zone_upper:
                     # Verify the previous candle was above or at the zone
                     prev_candle = candles[-2]
                     if prev_candle.close >= zone_lower:

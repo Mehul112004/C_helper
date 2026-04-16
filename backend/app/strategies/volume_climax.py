@@ -22,6 +22,12 @@ class VolumeClimaxStrategy(BaseStrategy):
 
         current_candle = candles[-1]
         
+        # ═══════ Exhaustion Guard ═══════
+        # Reject if the current candle body is overextended (> 2× ATR)
+        # Note: RSI extremes are NOT blocked here — they're desired for volume climax
+        if indicators.atr_14 and current_candle.body_size > 2 * indicators.atr_14:
+            return None
+
         # We need a significant volume anomaly (2x MA is already notable)
         if current_candle.volume <= indicators.volume_ma_20 * 2:
             return None
@@ -128,9 +134,9 @@ class VolumeClimaxStrategy(BaseStrategy):
     def calculate_sl(self, signal, candles, atr):
         """Structural SL: Behind the climax candle's wick — the invalidation point."""
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.5 * atr), 8)
+            return round(candles[-1].low - (1.0 * atr), 8)
         else:
-            return round(candles[-1].high + (0.5 * atr), 8)
+            return round(candles[-1].high + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: 1.5R and 3.0R from structural stop."""

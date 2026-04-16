@@ -41,6 +41,10 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
         current = candles[-1]
         window = candles[-(self.LOOKBACK + self.PIVOT_BARS):]
 
+        # ═══════ Exhaustion Guards ═══════
+        if indicators.atr_14 and current.body_size > 2 * indicators.atr_14:
+            return None
+
         # Map fractals from the window (exclude the most recent PIVOT_BARS candles
         # because they can't form a confirmed pivot yet)
         fractal_highs, fractal_lows = find_fractal_points(window[:-1], self.PIVOT_BARS)
@@ -52,50 +56,54 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
             sweep_threshold = level * (1 + self.SWEEP_TOLERANCE)
 
             if current.high > sweep_threshold and current.close < level:
-                # Wick exceeded the level but body closed below → sweep
-                wick_above = current.high - level
-                body_top = max(current.open, current.close)
+                # RSI exhaustion: already oversold → don't go SHORT on a sweep reversal
+                if indicators.rsi_14 is not None and indicators.rsi_14 < 25:
+                    pass  # Skip bearish sweep
+                else:
+                    # Wick exceeded the level but body closed below → sweep
+                    wick_above = current.high - level
+                    body_top = max(current.open, current.close)
 
-                # Enforce meaningful rejection: wick above level should be significant
-                if wick_above > 0 and body_top < level:
-                    # Cooldown check: ensure we haven't been lingering at this level
-                    lingering = sum(
-                        1 for c in candles[-(self.COOLDOWN_CANDLES + 1):-1]
-                        if abs(c.high - level) / level < self.SWEEP_TOLERANCE * 2
-                    )
-                    if lingering < 2:
-                        confidence = 0.62
-
-                        # +0.10 for strong rejection wick
-                        if current.upper_wick > current.body_size * 1.5:
-                            confidence += 0.10
-
-                        # +0.08 for RSI overbought (confirming exhaustion)
-                        if indicators.rsi_14 and indicators.rsi_14 > 65:
-                            confidence += 0.08
-
-                        # +0.08 for volume spike
-                        if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.3:
-                            confidence += 0.08
-
-                        # +0.07 if bearish candle body
-                        if current.is_bearish:
-                            confidence += 0.07
-
-                        return SetupSignal(
-                            strategy_name=self.name,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            direction="SHORT",
-                            confidence=min(confidence, 1.0),
-                            entry=current.close,
-                            notes=(
-                                f"Bearish liquidity sweep: wick pierced fractal high at "
-                                f"{level:.2f} (high={current.high:.2f}) but closed at "
-                                f"{current.close:.2f}. Rejection ratio: "
-                                f"{current.upper_wick / max(current.body_size, 0.0001):.1f}x."
-                            ),
+                    # Enforce meaningful rejection: wick above level should be significant
+                    if wick_above > 0 and body_top < level:
+                        # Cooldown check: ensure we haven't been lingering at this level
+                        lingering = sum(
+                            1 for c in candles[-(self.COOLDOWN_CANDLES + 1):-1]
+                            if abs(c.high - level) / level < self.SWEEP_TOLERANCE * 2
                         )
+                        if lingering < 2:
+                            confidence = 0.62
+
+                            # +0.10 for strong rejection wick
+                            if current.upper_wick > current.body_size * 1.5:
+                                confidence += 0.10
+
+                            # +0.08 for RSI overbought (confirming exhaustion)
+                            if indicators.rsi_14 and indicators.rsi_14 > 65:
+                                confidence += 0.08
+
+                            # +0.08 for volume spike
+                            if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.3:
+                                confidence += 0.08
+
+                            # +0.07 if bearish candle body
+                            if current.is_bearish:
+                                confidence += 0.07
+
+                            return SetupSignal(
+                                strategy_name=self.name,
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                direction="SHORT",
+                                confidence=min(confidence, 1.0),
+                                entry=current.close,
+                                notes=(
+                                    f"Bearish liquidity sweep: wick pierced fractal high at "
+                                    f"{level:.2f} (high={current.high:.2f}) but closed at "
+                                    f"{current.close:.2f}. Rejection ratio: "
+                                    f"{current.upper_wick / max(current.body_size, 0.0001):.1f}x."
+                                ),
+                            )
 
         # --- Bullish Sweep (wick below fractal low, close back above) → LONG ---
         if fractal_lows:
@@ -104,47 +112,51 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
             sweep_threshold = level * (1 - self.SWEEP_TOLERANCE)
 
             if current.low < sweep_threshold and current.close > level:
-                wick_below = level - current.low
-                body_bottom = min(current.open, current.close)
+                # RSI exhaustion: already overbought → don't go LONG on a sweep reversal
+                if indicators.rsi_14 is not None and indicators.rsi_14 > 75:
+                    pass  # Skip bullish sweep
+                else:
+                    wick_below = level - current.low
+                    body_bottom = min(current.open, current.close)
 
-                if wick_below > 0 and body_bottom > level:
-                    lingering = sum(
-                        1 for c in candles[-(self.COOLDOWN_CANDLES + 1):-1]
-                        if abs(c.low - level) / level < self.SWEEP_TOLERANCE * 2
-                    )
-                    if lingering < 2:
-                        confidence = 0.62
-
-                        # +0.10 for strong rejection wick
-                        if current.lower_wick > current.body_size * 1.5:
-                            confidence += 0.10
-
-                        # +0.08 for RSI oversold (confirming exhaustion)
-                        if indicators.rsi_14 and indicators.rsi_14 < 35:
-                            confidence += 0.08
-
-                        # +0.08 for volume spike
-                        if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.3:
-                            confidence += 0.08
-
-                        # +0.07 if bullish candle body
-                        if current.is_bullish:
-                            confidence += 0.07
-
-                        return SetupSignal(
-                            strategy_name=self.name,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            direction="LONG",
-                            confidence=min(confidence, 1.0),
-                            entry=current.close,
-                            notes=(
-                                f"Bullish liquidity sweep: wick pierced fractal low at "
-                                f"{level:.2f} (low={current.low:.2f}) but closed at "
-                                f"{current.close:.2f}. Rejection ratio: "
-                                f"{current.lower_wick / max(current.body_size, 0.0001):.1f}x."
-                            ),
+                    if wick_below > 0 and body_bottom > level:
+                        lingering = sum(
+                            1 for c in candles[-(self.COOLDOWN_CANDLES + 1):-1]
+                            if abs(c.low - level) / level < self.SWEEP_TOLERANCE * 2
                         )
+                        if lingering < 2:
+                            confidence = 0.62
+
+                            # +0.10 for strong rejection wick
+                            if current.lower_wick > current.body_size * 1.5:
+                                confidence += 0.10
+
+                            # +0.08 for RSI oversold (confirming exhaustion)
+                            if indicators.rsi_14 and indicators.rsi_14 < 35:
+                                confidence += 0.08
+
+                            # +0.08 for volume spike
+                            if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.3:
+                                confidence += 0.08
+
+                            # +0.07 if bullish candle body
+                            if current.is_bullish:
+                                confidence += 0.07
+
+                            return SetupSignal(
+                                strategy_name=self.name,
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                direction="LONG",
+                                confidence=min(confidence, 1.0),
+                                entry=current.close,
+                                notes=(
+                                    f"Bullish liquidity sweep: wick pierced fractal low at "
+                                    f"{level:.2f} (low={current.low:.2f}) but closed at "
+                                    f"{current.close:.2f}. Rejection ratio: "
+                                    f"{current.lower_wick / max(current.body_size, 0.0001):.1f}x."
+                                ),
+                            )
 
         return None
 
@@ -152,9 +164,9 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
         """Structural SL: Placed strictly just beyond the sweep candle's wick."""
         # We use a tiny 0.5 ATR buffer strictly for spread/slippage
         if signal.direction == "LONG":
-            return round(candles[-1].low - (0.5 * atr), 8)
+            return round(candles[-1].low - (1.0 * atr), 8)
         else:
-            return round(candles[-1].high + (0.5 * atr), 8)
+            return round(candles[-1].high + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr):
         """Risk-based TP: Scales dynamically based on the size of the sweep wick."""
