@@ -120,6 +120,28 @@ def list_confirmed_signals():
     return jsonify({'signals': signals_list, 'count': len(signals_list)}), 200
 
 
+@signals_bp.route('/rejected', methods=['GET'])
+def list_rejected_signals():
+    """
+    Get all rejected signals from the LLM filter.
+    Includes the origin session_id by joining WatchingSetup.
+    """
+    from app.models.db import db, RejectedSignal, WatchingSetup
+    
+    results = db.session.query(RejectedSignal, WatchingSetup.session_id)\
+        .join(WatchingSetup, RejectedSignal.watching_setup_id == WatchingSetup.id)\
+        .order_by(RejectedSignal.created_at.desc())\
+        .all()
+        
+    signals_list = []
+    for sig, session_id in results:
+        sig_dict = sig.to_dict()
+        sig_dict['session_id'] = session_id
+        signals_list.append(sig_dict)
+        
+    return jsonify({'signals': signals_list, 'count': len(signals_list)}), 200
+
+
 @signals_bp.route('/export/confirmed', methods=['GET'])
 def export_confirmed_signals():
     """

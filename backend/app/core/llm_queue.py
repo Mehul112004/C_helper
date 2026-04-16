@@ -109,7 +109,7 @@ class LLMQueueManager:
             return
             
         with self._app.app_context():
-            from app.models.db import db, ConfirmedSignal, WatchingSetup
+            from app.models.db import db, ConfirmedSignal, WatchingSetup, RejectedSignal
             
             w_setup = WatchingSetup.query.get(watching_setup_id)
             if not w_setup:
@@ -165,6 +165,26 @@ class LLMQueueManager:
                 outcome_tracker.add_to_cache(new_sig)
             
             else: # REJECT
+                db_entry = signal.entry if signal.entry else getattr(w_setup, 'entry', 0.0)
+                db_sl = getattr(w_setup, 'sl', 0.0)
+                db_tp1 = getattr(w_setup, 'tp1', 0.0)
+                db_tp2 = getattr(w_setup, 'tp2', 0.0)
+
+                new_rejected = RejectedSignal(
+                    id=str(uuid.uuid4()),
+                    watching_setup_id=watching_setup_id,
+                    symbol=signal.symbol,
+                    timeframe=signal.timeframe,
+                    direction=signal.direction,
+                    strategy_name=signal.strategy_name,
+                    confidence=signal.confidence,
+                    entry=db_entry,
+                    sl=db_sl,
+                    tp1=db_tp1,
+                    tp2=db_tp2,
+                    reasoning_text=verdict_data.reasoning
+                )
+                db.session.add(new_rejected)
                 db.session.commit()
                 sse_manager.publish('setup_rejected', w_setup.to_dict())
                 logger.info(f"Signal for {signal.symbol} REJECTED by LLM. {verdict_data.reasoning}")

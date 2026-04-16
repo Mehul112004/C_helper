@@ -54,6 +54,23 @@ export interface ConfirmedSignal {
   outcome_updated_at: string | null;
 }
 
+export interface RejectedSignal {
+  id: string;
+  watching_setup_id: string;
+  session_id: string; // Joined dynamically on the backend
+  symbol: string;
+  timeframe: string;
+  direction: 'LONG' | 'SHORT';
+  strategy_name: string;
+  confidence: number;
+  entry: number | null;
+  sl: number | null;
+  tp1: number | null;
+  tp2: number | null;
+  reasoning_text: string;
+  created_at: string;
+}
+
 export interface PriceUpdate {
   session_id: string;
   symbol: string;

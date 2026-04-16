@@ -1,14 +1,15 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Eye, CheckCircle } from 'lucide-react';
+import { Eye, CheckCircle, XCircle } from 'lucide-react';
 import { useSSE } from '../../hooks/useSSE';
 import { useAnalysisSessions } from '../../hooks/useAnalysisSessions';
 import SessionPanel from './SessionPanel';
 import WatchingTab from './WatchingTab';
 import ConfirmedTab from './ConfirmedTab';
-import type { WatchingSetup, ConfirmedSignal, SSEEventType, PriceUpdate } from '../../types/signals';
+import RejectedTab from './RejectedTab';
+import type { WatchingSetup, ConfirmedSignal, RejectedSignal, SSEEventType, PriceUpdate } from '../../types/signals';
 import { apiClient } from '../../api/client';
 
-type Tab = 'watching' | 'confirmed';
+type Tab = 'watching' | 'confirmed' | 'rejected';
 
 /**
  * Main Signal Feed page — the primary daily-use page.
@@ -18,6 +19,7 @@ export default function SignalFeed() {
   const [activeTab, setActiveTab] = useState<Tab>('watching');
   const [watchingSetups, setWatchingSetups] = useState<WatchingSetup[]>([]);
   const [confirmedSignals, setConfirmedSignals] = useState<ConfirmedSignal[]>([]);
+  const [rejectedSignals, setRejectedSignals] = useState<RejectedSignal[]>([]);
 
   const {
     sessions,
@@ -29,7 +31,7 @@ export default function SignalFeed() {
     setSessions,
   } = useAnalysisSessions();
 
-  // Fetch initial watching setups and confirmed signals
+  // Fetch initial watching setups, confirmed signals, and rejected signals
   useEffect(() => {
     apiClient
       .get('/signals/watching')
@@ -39,6 +41,11 @@ export default function SignalFeed() {
     apiClient
       .get('/signals/confirmed')
       .then((res) => setConfirmedSignals(res.data.signals || []))
+      .catch(() => {});
+
+    apiClient
+      .get('/signals/rejected')
+      .then((res) => setRejectedSignals(res.data.signals || []))
       .catch(() => {});
   }, []);
 
@@ -200,14 +207,23 @@ export default function SignalFeed() {
           <CheckCircle size={16} />
           Confirmed
         </button>
+        <button
+          onClick={() => setActiveTab('rejected')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition ${
+            activeTab === 'rejected'
+              ? 'border-red-500 text-red-400'
+              : 'border-transparent text-slate-400 hover:text-slate-300'
+          }`}
+        >
+          <XCircle size={16} />
+          Rejected
+        </button>
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'watching' ? (
-        <WatchingTab setups={watchingSetups} />
-      ) : (
-        <ConfirmedTab signals={confirmedSignals} activeSessionIds={sessions.map(s => s.session_id)} />
-        )}
+      {activeTab === 'watching' && <WatchingTab setups={watchingSetups} />}
+      {activeTab === 'confirmed' && <ConfirmedTab signals={confirmedSignals} activeSessionIds={sessions.map(s => s.session_id)} />}
+      {activeTab === 'rejected' && <RejectedTab signals={rejectedSignals} activeSessionIds={sessions.map(s => s.session_id)} />}
       </div>
     </div>
   );
