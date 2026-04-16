@@ -198,3 +198,22 @@ export const fetchBacktestRun = async (runId: string): Promise<{ run: BacktestRu
 export const getBacktestExportUrl = (runId: string): string => {
   return `http://localhost:5001/api/backtest/${runId}/export`;
 };
+
+// ---------- Phase 8: LLM Logs ----------
+
+export interface LLMPromptLog {
+  id: number;
+  watching_setup_id: string;
+  symbol: string;
+  strategy_name: string;
+  model_name: string;
+  prompt_text: string;
+  response_text: string | null;
+  parsed_verdict: string;
+  created_at: string;
+}
+
+export const fetchLLMLogs = async (limit = 50, offset = 0): Promise<{ logs: LLMPromptLog[]; total: number; limit: number; offset: number }> => {
+  const { data } = await apiClient.get('/signals/llm_logs', { params: { limit, offset } });
+  return data;
+};

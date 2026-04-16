@@ -182,6 +182,27 @@ def lm_studio_status():
     return jsonify({'online': status}), 200
 
 
+# ---------- LLM Prompt Logs ----------
+
+@signals_bp.route('/llm_logs', methods=['GET'])
+def get_llm_logs():
+    """Get Paginated LLM Prompts & Responses for debugging."""
+    from app.models.db import LLMPromptLog
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    
+    logs = LLMPromptLog.query.order_by(LLMPromptLog.created_at.desc()).limit(limit).offset(offset).all()
+    count = LLMPromptLog.query.count()
+    
+    return jsonify({
+        'logs': [l.to_dict() for l in logs],
+        'total': count,
+        'limit': limit,
+        'offset': offset
+    }), 200
+
+
+
 # ---------- Server-Sent Events ----------
 
 @signals_bp.route('/stream')

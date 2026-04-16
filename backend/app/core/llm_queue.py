@@ -79,12 +79,14 @@ class LLMQueueManager:
                 
                 logger.info(f"Processing LLM evaluation for {signal.symbol} - {signal.strategy_name} "
                             f"(attempt {retry_count + 1}/{MAX_RETRIES + 1})")
-                verdict_data = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones, htf_candles)
+                verdict_data, prompt, raw_response = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones, htf_candles)
+                
+                # Log every interaction
+                self._log_prompt(watching_setup_id, signal, verdict_data, prompt, raw_response)
+                
                 if verdict_data:
                     logger.info(f"[LLMQueue] Verdict={verdict_data.verdict} confidence={verdict_data.confidence_score}/10 "
                                 f"for {signal.symbol}/{signal.strategy_name}")
-                
-                if verdict_data:
                     self._handle_verdict(watching_setup_id, signal, verdict_data)
                 else:
                     if retry_count < MAX_RETRIES:
@@ -102,6 +104,37 @@ class LLMQueueManager:
             except Exception as e:
                 logger.error(f"Error in LLM queue worker: {e}")
                 time.sleep(5)
+
+    def _log_prompt(self, watching_setup_id: str, signal: SetupSignal, verdict_data, prompt: str, raw_response: str):
+        if not self._app:
+            return
+        with self._app.app_context():
+            from app.models.db import db, LLMPromptLog
+            from app.core.llm_client import LM_STUDIO_MODEL
+            
+            parsed_verdict = verdict_data.verdict if verdict_data else 'ERROR'
+            
+            try:
+                new_log = LLMPromptLog(
+                    watching_setup_id=watching_setup_id,
+                    symbol=signal.symbol,
+                    strategy_name=signal.strategy_name,
+                    model_name=LM_STUDIO_MODEL,
+                    prompt_text=prompt,
+                    response_text=raw_response,
+                    parsed_verdict=parsed_verdict
+                )
+                db.session.add(new_log)
+                db.session.commit()
+                
+                # Cleanup: keep only last 1000
+                count = db.session.query(LLMPromptLog).count()
+                if count > 1000:
+                    subq = db.session.query(LLMPromptLog.id).order_by(LLMPromptLog.id.desc()).offset(1000).subquery()
+                    db.session.query(LLMPromptLog).filter(LLMPromptLog.id.in_(subq)).delete(synchronize_session=False)
+                    db.session.commit()
+            except Exception as e:
+                logger.error(f"Failed to log LLM prompt: {e}")
 
     def _handle_verdict(self, watching_setup_id: str, signal: SetupSignal, verdict_data):
         if not self._app:

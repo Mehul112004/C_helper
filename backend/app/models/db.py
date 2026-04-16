@@ -405,3 +405,33 @@ class BacktestTrade(db.Model):
             'duration_mins': self.duration_mins,
             'notes': self.notes,
         }
+
+class LLMPromptLog(db.Model):
+    """
+    Logs every interaction with the LLM. 
+    Loose coupling referencing 'watching_setup_id' since setups can be deleted.
+    """
+    __tablename__ = 'llm_prompt_logs'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    watching_setup_id = db.Column(db.String(100), index=True) # Loose reference
+    symbol = db.Column(db.String(20), nullable=False)
+    strategy_name = db.Column(db.String(50), nullable=False)
+    model_name = db.Column(db.String(100)) # e.g. google/gemma-4-e4b
+    prompt_text = db.Column(db.Text, nullable=False)
+    response_text = db.Column(db.Text, nullable=True)
+    parsed_verdict = db.Column(db.String(20)) # CONFIRM, REJECT, MODIFY, ERROR
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'watching_setup_id': self.watching_setup_id,
+            'symbol': self.symbol,
+            'strategy_name': self.strategy_name,
+            'model_name': self.model_name,
+            'prompt_text': self.prompt_text,
+            'response_text': self.response_text,
+            'parsed_verdict': self.parsed_verdict,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }

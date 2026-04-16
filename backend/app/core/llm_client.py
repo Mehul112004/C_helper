@@ -1,7 +1,7 @@
 import json
 import logging
 import requests
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 from pydantic import BaseModel, Field, ValidationError
 
@@ -137,10 +137,10 @@ class LLMClient:
         indicators: Indicators,
         sr_zones: list[dict],
         htf_candles: list[Candle] = None
-    ) -> Optional[LLMVerdictSchema]:
+    ) -> Tuple[Optional[LLMVerdictSchema], str, str]:
         """
         Sends the signal and context to LM Studio synchronously.
-        Returns the parsed LLMVerdictSchema or None on failure.
+        Returns a tuple: (parsed LLMVerdictSchema or None, prompt used, raw response text).
         """
         prompt = LLMClient._build_prompt_context(signal, candles, indicators, sr_zones, htf_candles)
         
@@ -170,15 +170,16 @@ class LLMClient:
             choices = data.get("choices", [])
             if not choices:
                 logger.error(f"[LLMClient] No choices in response: {json.dumps(data)[:500]}")
-                return None
+                return None, prompt, json.dumps(data)
             
             content = choices[0].get("message", {}).get("content", "").strip()
+            raw_response = content # save raw response for logging
             
             if not content:
                 # Log the full response for debugging
                 logger.error(f"[LLMClient] Empty content from LLM. Full response: {json.dumps(data)[:1000]}")
                 logger.error(f"[LLMClient] Finish reason: {choices[0].get('finish_reason', 'unknown')}")
-                return None
+                return None, prompt, json.dumps(data)
             
             logger.info(f"[LLMClient] Received response ({len(content)} chars), finish_reason={choices[0].get('finish_reason', 'unknown')}")
             
@@ -214,7 +215,7 @@ class LLMClient:
             # Ensure proper string matching
             if parsed.verdict not in ('CONFIRM', 'REJECT', 'MODIFY'):
                 logger.error(f"LLM produced invalid verdict: {parsed.verdict}")
-                return None
+                return None, prompt, raw_response
 
             # Clamp confidence_score to valid range
             parsed.confidence_score = max(1, min(10, parsed.confidence_score))
@@ -228,23 +229,23 @@ class LLMClient:
                 parsed.verdict = 'REJECT'
                 parsed.reasoning += f" [AUTO-REJECTED: confidence_score {parsed.confidence_score}/10 below threshold {LLM_CONFIDENCE_THRESHOLD}]"
 
-            return parsed
+            return parsed, prompt, raw_response
             
         except requests.exceptions.Timeout:
             logger.error(f"[LLMClient] Request timed out after {REQUEST_TIMEOUT}s. Model may be overloaded.")
-            return None
+            return None, prompt, "ERROR: Request timed out"
         except requests.exceptions.RequestException as e:
             logger.error(f"LM Studio connection error: {str(e)}")
-            return None
+            return None, prompt, f"ERROR: Connection error - {str(e)}"
         except json.JSONDecodeError as e:
             logger.error(f"LLM JSON Decode error: {str(e)}\nRaw Response: {content}")
-            return None
+            return None, prompt, f"ERROR: JSONDecodeError - {str(e)}\nRaw block: {raw_response}"
         except ValidationError as e:
             logger.error(f"LLM JSON Schema validation error: {str(e)}\nRaw Response: {content}")
-            return None
+            return None, prompt, f"ERROR: ValidationError - {str(e)}\nRaw block: {raw_response}"
         except Exception as e:
             logger.error(f"Unexpected error in LLM evaluate_signal: {str(e)}")
-            return None
+            return None, prompt, f"ERROR: Unexpected exception - {str(e)}"
 
     @staticmethod
     def ping_status() -> bool:
