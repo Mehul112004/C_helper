@@ -66,7 +66,7 @@ export default function ConfirmedCard({ signal }: ConfirmedCardProps) {
       </div>
 
       {/* Entry / SL / TP */}
-      <div className="grid grid-cols-4 gap-1 text-xs mb-3 bg-slate-900/50 p-2 rounded">
+      <div className="grid grid-cols-2 gap-2 text-xs mb-3 bg-slate-900/50 p-2 rounded">
         <div>
           <span className="text-slate-500">Entry</span>
           <p className="text-white font-mono">{signal.entry.toLocaleString()}</p>
