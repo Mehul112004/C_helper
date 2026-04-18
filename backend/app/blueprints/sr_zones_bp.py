@@ -7,7 +7,8 @@ Endpoints:
 
 from flask import Blueprint, request, jsonify
 from app.models.db import db, SRZone
-from app.core.sr_engine import SREngine, SUPPORTED_SYMBOLS
+from app.core.sr_engine import SREngine
+from app.core.config import SUPPORTED_SYMBOLS
 
 sr_zones_bp = Blueprint('sr_zones', __name__)
 

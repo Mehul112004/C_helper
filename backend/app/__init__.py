@@ -60,12 +60,12 @@ def create_app(test_config=None):
 
     # Initialize background scheduler and live scanner (only in non-testing mode)
     if not app.config.get('TESTING', False):
-        from app.core.scheduler import init_scheduler
-        init_scheduler(app)
-
         from app.core.scanner import live_scanner
         live_scanner.set_app(app)
         atexit.register(live_scanner.stop_all)
+
+        from app.core.scheduler import init_scheduler
+        init_scheduler(app, live_scanner)
         
         from app.core.llm_queue import llm_queue
         llm_queue.set_app(app)

@@ -7,21 +7,31 @@ Detects Support/Resistance zones from candle data using multiple methods:
 - Zone merging and strength scoring
 """
 
+import threading
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from app.models.db import db, Candle, SRZone
 from app.core.indicators import IndicatorService
+from app.core.config import SUPPORTED_SYMBOLS
 
 
 # Timeframe weights for strength scoring
 # Higher timeframe zones carry more weight
 TIMEFRAME_WEIGHTS = {
-    '1D': 0.40,
-    '4h': 0.30,
-    '1h': 0.20,
+    '1w':  0.50,
+    '1D':  0.40,
+    '12h': 0.35,
+    '8h':  0.32,
+    '6h':  0.30,
+    '4h':  0.28,
+    '2h':  0.22,
+    '1h':  0.20,
+    '30m': 0.15,
     '15m': 0.10,
-    '5m': 0.05,
+    '5m':  0.07,
+    '3m':  0.05,
+    '1m':  0.03,
 }
 
 # Round number increments per symbol for psychological levels
@@ -35,12 +45,21 @@ ROUND_NUMBER_CONFIG = {
 # Default for unknown symbols
 DEFAULT_ROUND_CONFIG = {'small': 100, 'large': 500}
 
-# Symbols supported by the platform
-SUPPORTED_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT']
-
 
 class SREngine:
     """Detects and manages S/R zones for the platform."""
+
+    # --- Per-symbol refresh locks (FIX-SCH-3) ---
+    _refresh_locks: dict[str, threading.Lock] = {}
+    _refresh_locks_meta = threading.Lock()
+
+    @classmethod
+    def get_refresh_lock(cls, symbol: str) -> threading.Lock:
+        """Get or create a per-symbol lock for coordinating zone refresh/read."""
+        with cls._refresh_locks_meta:
+            if symbol not in cls._refresh_locks:
+                cls._refresh_locks[symbol] = threading.Lock()
+            return cls._refresh_locks[symbol]
 
     # ---------- Detection Methods ----------
 
@@ -65,24 +84,28 @@ class SREngine:
         times = df['open_time'].values
 
         for i in range(lookback, len(df) - lookback):
-            # Check for swing high
+            # Check for swing high — only flag the first occurrence of the max (FIX-SR-8)
             window_highs = highs[i - lookback: i + lookback + 1]
-            if highs[i] == window_highs.max():
+            max_val = window_highs.max()
+            if highs[i] == max_val and np.argmax(window_highs) == lookback:
                 zones.append({
                     'price_level': float(highs[i]),
                     'zone_type': 'resistance',
                     'detection_method': 'swing',
                     'timestamp': pd.Timestamp(times[i]).to_pydatetime(),
+                    '_formation_idx': i,  # consumed by score_zone, not persisted (FIX-SR-4)
                 })
 
-            # Check for swing low
+            # Check for swing low — only flag the first occurrence of the min (FIX-SR-8)
             window_lows = lows[i - lookback: i + lookback + 1]
-            if lows[i] == window_lows.min():
+            min_val = window_lows.min()
+            if lows[i] == min_val and np.argmin(window_lows) == lookback:
                 zones.append({
                     'price_level': float(lows[i]),
                     'zone_type': 'support',
                     'detection_method': 'swing',
                     'timestamp': pd.Timestamp(times[i]).to_pydatetime(),
+                    '_formation_idx': i,  # consumed by score_zone, not persisted (FIX-SR-4)
                 })
 
         return zones
@@ -110,13 +133,16 @@ class SREngine:
             increment = config[increment_key]
 
             # Start from the nearest round number at or below price_lower
-            # Use round() to handle floating point arithmetic for small increments
+            # Use integer step counter to avoid floating-point drift (FIX-SR-7)
             start = round((price_lower // increment) * increment, 10)
-            level = start
+            n = 0
 
-            while level <= price_upper:
+            while True:
+                level = round(start + n * increment, 10)
+                if level > price_upper:
+                    break
                 # Only include levels within the actual range bounds
-                if level > 0 and level >= price_lower and level <= price_upper:
+                if level > 0 and level >= price_lower:
                     # Determine if support or resistance relative to current price
                     if level < current_price:
                         zone_type = 'support'
@@ -131,7 +157,7 @@ class SREngine:
                         'detection_method': 'round_number',
                         'timestamp': datetime.utcnow(),
                     })
-                level = round(level + increment, 10)
+                n += 1
 
         # Deduplicate (large increments are subsets of small ones)
         seen = set()
@@ -147,7 +173,7 @@ class SREngine:
     @staticmethod
     def detect_prev_period_hl(symbol: str) -> list[dict]:
         """
-        Detect previous day and previous week high/low levels.
+        Detect previous day and previous ISO calendar week high/low levels.
         These are strong institutional levels — uses 1D candles regardless of analysis timeframe.
 
         Args:
@@ -158,12 +184,12 @@ class SREngine:
         """
         zones = []
 
-        # Fetch recent 1D candles (need at least 7 for previous week)
+        # Fetch recent 1D candles (enough to cover a full previous week)
         candles_1d = (
             Candle.query
             .filter_by(symbol=symbol, timeframe='1D')
             .order_by(Candle.open_time.desc())
-            .limit(10)
+            .limit(14)
             .all()
         )
 
@@ -183,24 +209,42 @@ class SREngine:
                 'timestamp': prev_day.open_time,
             })
 
-        if len(candles_1d) >= 6:
-            # Previous week high/low (candles index 1 through 5 → last 5 trading days)
-            week_candles = candles_1d[1:6]
-            week_high = max(c.high for c in week_candles)
-            week_low = min(c.low for c in week_candles)
+        # Determine the previous ISO week (Monday–Sunday) (FIX-SR-2)
+        today = datetime.utcnow().date()
+        current_iso_week = today.isocalendar()[1]
+        current_iso_year = today.isocalendar()[0]
 
-            zones.append({
-                'price_level': float(week_high),
-                'zone_type': 'resistance',
-                'detection_method': 'prev_week_hl',
-                'timestamp': week_candles[0].open_time,
-            })
-            zones.append({
-                'price_level': float(week_low),
-                'zone_type': 'support',
-                'detection_method': 'prev_week_hl',
-                'timestamp': week_candles[-1].open_time,
-            })
+        prev_week_candles = [
+            c for c in candles_1d
+            if c.open_time.isocalendar()[1] != current_iso_week
+            or c.open_time.isocalendar()[0] != current_iso_year
+        ]
+
+        if prev_week_candles:
+            # Filter to only the immediately previous week
+            prev_week_num = prev_week_candles[0].open_time.isocalendar()[1]
+            prev_week_year = prev_week_candles[0].open_time.isocalendar()[0]
+            prev_week_candles = [
+                c for c in prev_week_candles
+                if c.open_time.isocalendar()[1] == prev_week_num
+                and c.open_time.isocalendar()[0] == prev_week_year
+            ]
+
+            if prev_week_candles:
+                week_high = max(c.high for c in prev_week_candles)
+                week_low = min(c.low for c in prev_week_candles)
+                zones.append({
+                    'price_level': float(week_high),
+                    'zone_type': 'resistance',
+                    'detection_method': 'prev_week_hl',
+                    'timestamp': prev_week_candles[0].open_time,
+                })
+                zones.append({
+                    'price_level': float(week_low),
+                    'zone_type': 'support',
+                    'detection_method': 'prev_week_hl',
+                    'timestamp': prev_week_candles[-1].open_time,
+                })
 
         return zones
 
@@ -226,7 +270,7 @@ class SREngine:
     def merge_zones(zones: list[dict], atr: float) -> list[dict]:
         """
         Merge overlapping zones that are within 0.5 × ATR of each other.
-        When merging, keep the zone with higher touch count / more recent timestamp.
+        Iterates until output stabilises to catch cascading overlaps (FIX-SR-6).
 
         Args:
             zones: List of candidate zone dicts
@@ -239,40 +283,42 @@ class SREngine:
             return zones
 
         merge_threshold = 0.5 * atr
-        # Sort by price level
-        sorted_zones = sorted(zones, key=lambda z: z['price_level'])
-        merged = []
 
-        for zone in sorted_zones:
-            if not merged:
-                merged.append(zone)
-                continue
+        def _single_pass(zs: list[dict]) -> list[dict]:
+            sorted_zs = sorted(zs, key=lambda z: z['price_level'])
+            merged = []
+            for zone in sorted_zs:
+                if not merged:
+                    merged.append(zone)
+                    continue
+                last = merged[-1]
+                if abs(zone['price_level'] - last['price_level']) <= merge_threshold:
+                    last['price_level'] = (last['price_level'] + zone['price_level']) / 2.0
+                    if last['zone_type'] != zone['zone_type']:
+                        last['zone_type'] = 'both'
+                    if zone.get('timestamp') and last.get('timestamp'):
+                        if zone['timestamp'] > last['timestamp']:
+                            last['timestamp'] = zone['timestamp']
+                    # Keep higher touch count on merge
+                    last['touch_count'] = max(
+                        last.get('touch_count', 0), zone.get('touch_count', 0)
+                    )
+                else:
+                    merged.append(zone)
+            return merged
 
-            last = merged[-1]
-            if abs(zone['price_level'] - last['price_level']) <= merge_threshold:
-                # Merge: keep average price level, prefer the more significant type
-                avg_price = (last['price_level'] + zone['price_level']) / 2.0
-                last['price_level'] = avg_price
+        prev = zones
+        for _ in range(10):  # Safety cap — converges in 2–3 passes in practice
+            result = _single_pass(prev)
+            if len(result) == len(prev):
+                break
+            prev = result
 
-                # If one is support and other is resistance, mark as 'both'
-                if last['zone_type'] != zone['zone_type']:
-                    last['zone_type'] = 'both'
-
-                # Keep the more recent timestamp
-                if zone.get('timestamp') and last.get('timestamp'):
-                    if zone['timestamp'] > last['timestamp']:
-                        last['timestamp'] = zone['timestamp']
-
-                # Prefer the more descriptive method, or combine
-                if last['detection_method'] != zone['detection_method']:
-                    last['detection_method'] = last['detection_method']  # keep first
-            else:
-                merged.append(zone)
-
-        return merged
+        return result
 
     @staticmethod
-    def score_zone(zone: dict, df: pd.DataFrame, timeframe: str) -> dict:
+    def score_zone(zone: dict, df: pd.DataFrame, timeframe: str,
+                   formation_idx: int = None) -> dict:
         """
         Assign a strength score to a zone based on historical touches and timeframe weight.
 
@@ -284,6 +330,7 @@ class SREngine:
             zone: Zone dict with price_level, zone_upper, zone_lower
             df: DataFrame of candles for touch counting
             timeframe: Origin timeframe of this zone
+            formation_idx: Index of the candle that formed this zone (excluded from touch count)
 
         Returns:
             Updated zone dict with strength_score and touch_count
@@ -291,21 +338,23 @@ class SREngine:
         upper = zone.get('zone_upper', zone['price_level'])
         lower = zone.get('zone_lower', zone['price_level'])
 
-        # Count touches: candles where high >= lower AND low <= upper (price entered the zone)
-        touches = ((df['high'] >= lower) & (df['low'] <= upper)).sum()
-        touch_count = int(touches)
+        touch_mask = (df['high'] >= lower) & (df['low'] <= upper)
+
+        # Exclude the candle that formed this zone (FIX-SR-4)
+        if formation_idx is not None and formation_idx < len(df):
+            touch_mask.iloc[formation_idx] = False
+
+        touch_count = int(touch_mask.sum())
 
         tf_weight = TIMEFRAME_WEIGHTS.get(timeframe, 0.10)
         strength = min(1.0, (touch_count * 0.15) + tf_weight)
 
         # Find the most recent touch
-        touch_mask = (df['high'] >= lower) & (df['low'] <= upper)
+        last_tested = None
         if touch_mask.any():
             last_tested = df.loc[touch_mask, 'open_time'].iloc[-1]
             if isinstance(last_tested, pd.Timestamp):
                 last_tested = last_tested.to_pydatetime()
-        else:
-            last_tested = None
 
         zone['strength_score'] = round(strength, 4)
         zone['touch_count'] = touch_count
@@ -396,7 +445,8 @@ class SREngine:
 
         # ---------- Score zones ----------
         for zone in merged_zones:
-            cls.score_zone(zone, df, timeframe)
+            cls.score_zone(zone, df, timeframe,
+                           formation_idx=zone.pop('_formation_idx', None))
 
         # Add symbol and timeframe metadata
         for zone in merged_zones:
@@ -412,106 +462,135 @@ class SREngine:
         """
         Persist detected zones to the database.
         Uses upsert logic: update existing zones, insert new ones.
+        Falls back to generic SQLAlchemy ORM if PostgreSQL dialect is unavailable (FIX-SR-3).
 
         Args:
             symbol: Trading pair
             timeframe: Candle timeframe
             zones: List of zone dicts from detect_zones()
         """
-        from sqlalchemy.dialects.postgresql import insert
-
         if not zones:
             return
 
-        for zone in zones:
-            zone_record = {
-                'symbol': zone['symbol'],
-                'timeframe': zone['timeframe'],
-                'price_level': round(zone['price_level'], 8),
-                'zone_upper': round(zone['zone_upper'], 8),
-                'zone_lower': round(zone['zone_lower'], 8),
-                'zone_type': zone['zone_type'],
-                'detection_method': zone['detection_method'],
-                'strength_score': zone.get('strength_score', 0.0),
-                'touch_count': zone.get('touch_count', 0),
-                'last_tested': zone.get('last_tested'),
-            }
+        try:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-            stmt = insert(SRZone).values(**zone_record)
-            do_upsert = stmt.on_conflict_do_update(
-                constraint='uq_sr_zone',
-                set_={
-                    'zone_upper': stmt.excluded.zone_upper,
-                    'zone_lower': stmt.excluded.zone_lower,
-                    'zone_type': stmt.excluded.zone_type,
-                    'strength_score': stmt.excluded.strength_score,
-                    'touch_count': stmt.excluded.touch_count,
-                    'last_tested': stmt.excluded.last_tested,
-                    'updated_at': db.func.now(),
-                }
-            )
-            db.session.execute(do_upsert)
+            for zone in zones:
+                zone_record = cls._build_zone_record(zone)
+                stmt = pg_insert(SRZone).values(**zone_record)
+                do_upsert = stmt.on_conflict_do_update(
+                    constraint='uq_sr_zone',
+                    set_={
+                        'zone_upper': stmt.excluded.zone_upper,
+                        'zone_lower': stmt.excluded.zone_lower,
+                        'zone_type': stmt.excluded.zone_type,
+                        'strength_score': stmt.excluded.strength_score,
+                        'touch_count': stmt.excluded.touch_count,
+                        'last_tested': stmt.excluded.last_tested,
+                        'updated_at': db.func.now(),
+                    }
+                )
+                db.session.execute(do_upsert)
+
+        except Exception:
+            # SQLite / generic fallback (test environment)
+            db.session.rollback()
+            for zone in zones:
+                zone_record = cls._build_zone_record(zone)
+                existing = SRZone.query.filter_by(
+                    symbol=zone_record['symbol'],
+                    timeframe=zone_record['timeframe'],
+                    price_level=zone_record['price_level'],
+                ).first()
+                if existing:
+                    for key, val in zone_record.items():
+                        setattr(existing, key, val)
+                else:
+                    db.session.add(SRZone(**zone_record))
 
         db.session.commit()
         print(f"[SREngine] Persisted {len(zones)} zones for {symbol}/{timeframe}")
+
+    @staticmethod
+    def _build_zone_record(zone: dict) -> dict:
+        """Extract and round zone fields for DB insertion."""
+        return {
+            'symbol': zone['symbol'],
+            'timeframe': zone['timeframe'],
+            'price_level': round(zone['price_level'], 8),
+            'zone_upper': round(zone['zone_upper'], 8),
+            'zone_lower': round(zone['zone_lower'], 8),
+            'zone_type': zone['zone_type'],
+            'detection_method': zone['detection_method'],
+            'strength_score': zone.get('strength_score', 0.0),
+            'touch_count': zone.get('touch_count', 0),
+            'last_tested': zone.get('last_tested'),
+        }
 
     @classmethod
     def full_refresh(cls, symbol: str, timeframe: str):
         """
         Full S/R zone refresh: detect all zones and persist to DB.
-        Called on 4h candle close.
+        Called on 4h candle close. Uses per-symbol lock to avoid races (FIX-SCH-3).
         """
         print(f"[SREngine] Full refresh for {symbol}/{timeframe}...")
-        zones = cls.detect_zones(symbol, timeframe)
-        if zones:
-            cls.persist_zones(symbol, timeframe, zones)
-        else:
-            print(f"[SREngine] No zones detected for {symbol}/{timeframe}")
+        with cls.get_refresh_lock(symbol):
+            zones = cls.detect_zones(symbol, timeframe)
+            if zones:
+                cls.persist_zones(symbol, timeframe, zones)
+            else:
+                print(f"[SREngine] No zones detected for {symbol}/{timeframe}")
 
     @classmethod
     def minor_update(cls, symbol: str, timeframe: str):
         """
         Minor zone update: only swing point detection on latest data window.
         Called on 1h candle close. Adds new swing points without full recalculation.
+        Uses per-symbol lock to avoid races (FIX-SCH-3).
         """
         print(f"[SREngine] Minor update for {symbol}/{timeframe}...")
 
-        candles = (
-            Candle.query
-            .filter_by(symbol=symbol, timeframe=timeframe)
-            .order_by(Candle.open_time.desc())
-            .limit(50)  # Only recent window
-            .all()
-        )
+        with cls.get_refresh_lock(symbol):
+            candles = (
+                Candle.query
+                .filter_by(symbol=symbol, timeframe=timeframe)
+                .order_by(Candle.open_time.desc())
+                .limit(50)  # Only recent window
+                .all()
+            )
 
-        if len(candles) < 11:  # Need at least 2*lookback+1 candles
-            return
+            if len(candles) < 11:  # Need at least 2*lookback+1 candles
+                return
 
-        data = [c.to_dict() for c in candles]
-        df = pd.DataFrame(data)
-        df['open_time'] = pd.to_datetime(df['open_time'])
-        df = df.sort_values('open_time').reset_index(drop=True)
+            data = [c.to_dict() for c in candles]
+            df = pd.DataFrame(data)
+            df['open_time'] = pd.to_datetime(df['open_time'])
+            df = df.sort_values('open_time').reset_index(drop=True)
 
-        # Detect new swing points
-        swing_zones = cls.detect_swing_points(df, lookback=5)
+            # Detect new swing points
+            swing_zones = cls.detect_swing_points(df, lookback=5)
 
-        if not swing_zones:
-            return
+            if not swing_zones:
+                return
 
-        # Calculate ATR for zone widths
-        atr_series = IndicatorService.compute_atr(df['high'], df['low'], df['close'], 14)
-        current_atr = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0
-        current_price = float(df['close'].iloc[-1])
+            # Calculate ATR for zone widths
+            atr_series = IndicatorService.compute_atr(df['high'], df['low'], df['close'], 14)
+            current_atr = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0
+            current_price = float(df['close'].iloc[-1])
 
-        if current_atr <= 0:
-            current_atr = current_price * 0.01
+            if current_atr <= 0:
+                current_atr = current_price * 0.01
 
-        for zone in swing_zones:
-            upper, lower = cls.calculate_zone_width(zone['price_level'], current_atr)
-            zone['zone_upper'] = upper
-            zone['zone_lower'] = lower
-            zone['symbol'] = symbol
-            zone['timeframe'] = timeframe
-            cls.score_zone(zone, df, timeframe)
+            for zone in swing_zones:
+                upper, lower = cls.calculate_zone_width(zone['price_level'], current_atr)
+                zone['zone_upper'] = upper
+                zone['zone_lower'] = lower
+                zone['symbol'] = symbol
+                zone['timeframe'] = timeframe
+                cls.score_zone(zone, df, timeframe,
+                               formation_idx=zone.pop('_formation_idx', None))
 
-        cls.persist_zones(symbol, timeframe, swing_zones)
+            cls.persist_zones(symbol, timeframe, swing_zones)
+
+        # Invalidate indicator cache after zone changes (FIX-SCH-4)
+        IndicatorService.invalidate_cache(symbol, timeframe)

@@ -266,21 +266,29 @@ class LiveScanner:
                 # 2. Invalidate indicator cache
                 IndicatorService.invalidate_cache(symbol, timeframe)
 
+                # 2b. Trigger S/R zone refresh based on candle timeframe (FIX-SR-1)
+                from app.core.sr_engine import SREngine
+                if timeframe in ('4h', '1D'):
+                    SREngine.full_refresh(symbol, timeframe)
+                elif timeframe in ('1h', '15m'):
+                    SREngine.minor_update(symbol, timeframe)
+
                 # 3. Compute fresh indicators
                 indicator_result = IndicatorService.compute_all(symbol, timeframe, include_series=True)
                 if not indicator_result.get('latest'):
                     print(f"[LiveScanner]    ⚠ No indicator data for {symbol}/{timeframe}")
                     return
 
-                # 4. Fetch S/R zones near current price
+                # 4. Fetch S/R zones near current price (under refresh lock — FIX-SCH-3)
                 current_price = candle_data['close']
                 price_range = current_price * 0.03  # 3%
-                zones = SRZone.query.filter(
-                    SRZone.symbol == symbol,
-                    SRZone.price_level >= current_price - price_range,
-                    SRZone.price_level <= current_price + price_range,
-                ).all()
-                sr_zones = [z.to_dict() for z in zones]
+                with SREngine.get_refresh_lock(symbol):
+                    zones = SRZone.query.filter(
+                        SRZone.symbol == symbol,
+                        SRZone.price_level >= current_price - price_range,
+                        SRZone.price_level <= current_price + price_range,
+                    ).all()
+                    sr_zones = [z.to_dict() for z in zones]
 
                 # 5. Build candle window (last 50)
                 db_candles = (

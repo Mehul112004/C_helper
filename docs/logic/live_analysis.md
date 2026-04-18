@@ -62,8 +62,12 @@ When a candle closes on Binance:
 ```
 1. Upsert the closed candle into the `candles` DB table
 2. Invalidate the indicator cache for this symbol/timeframe
+2b. Trigger S/R zone refresh based on candle timeframe:
+    - 4h / 1D → SREngine.full_refresh() (full pipeline)
+    - 1h / 15m → SREngine.minor_update() (swing points only)
 3. Compute fresh indicators via IndicatorService.compute_all()
 4. Fetch S/R zones within 3% of the current close price
+   (under per-symbol refresh lock to avoid mid-commit reads)
 5. Build candle window (last 50 candles from DB)
 6. Build Indicators snapshot at the latest index
 7. For each active strategy in this session on this timeframe:
@@ -123,10 +127,17 @@ WebSocket Thread (per session, daemon)
 ├── receives Binance kline messages
 ├── fires on_price_update → publishes SSE event
 └── fires on_candle_close → acquires app context → runs full scan pipeline
+    ├── S/R zone refresh (full_refresh or minor_update, under per-symbol lock)
     ├── DB operations (upsert candle, query indicators/zones)
     ├── Strategy execution (run_single_scan)
     ├── WatchingManager operations (create/update/expire)
     └── SSE publishing (thread-safe via queue.Queue)
+
+Scheduler Thread (APScheduler, daemon)
+├── full_zone_refresh_4h  — every 4h at :01 (active sessions only)
+├── full_zone_refresh_1d  — daily at 00:02 (active sessions only)
+├── minor_zone_update     — hourly at :03 (active sessions only)
+└── startup_full_refresh  — once on boot
 ```
 
 ## Configuration
