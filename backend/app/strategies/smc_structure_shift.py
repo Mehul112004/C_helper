@@ -69,7 +69,7 @@ class SMCStructureShiftStrategy(BaseStrategy):
 
         return 'neutral'
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         if len(candles) < self.LOOKBACK + self.PIVOT_BARS:
             return None
 
@@ -269,7 +269,7 @@ class SMCStructureShiftStrategy(BaseStrategy):
             recent_high = max(c.high for c in candles[-5:])
             return round(recent_high + (1.0 * atr), 8)
 
-    def calculate_tp(self, signal, candles, atr):
+    def calculate_tp(self, signal, candles, atr, sr_zones=None):
         """Risk-based TP: 2.0R and 4.0R from structural stop."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)

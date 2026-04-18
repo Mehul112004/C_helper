@@ -37,7 +37,7 @@ class BollingerSqueezeStrategy(BaseStrategy):
 
         return indicators.prev_bb_width < avg_width
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         # Guard: need Bollinger Band values
         if indicators.bb_upper is None or indicators.bb_lower is None:
             return None
@@ -103,7 +103,7 @@ class BollingerSqueezeStrategy(BaseStrategy):
             recent_high = max(c.high for c in candles[-3:])
             return round(recent_high + (0.2 * atr), 8)
 
-    def calculate_tp(self, signal, candles, atr):
+    def calculate_tp(self, signal, candles, atr, sr_zones=None):
         """Risk-based TP: 2R and 3.5R — wider targets for breakout momentum."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)

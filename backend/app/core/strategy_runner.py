@@ -43,6 +43,7 @@ class StrategyRunner:
         candles: list[Candle],
         indicators: Indicators,
         sr_zones: list[dict],
+        htf_candles: list[Candle] = None,
         min_confidence_override: Optional[float] = None,
     ) -> Optional[SetupSignal]:
         """
@@ -68,7 +69,7 @@ class StrategyRunner:
             A fully populated SetupSignal or None
         """
         try:
-            signal = strategy.scan(symbol, timeframe, candles, indicators, sr_zones)
+            signal = strategy.scan(symbol, timeframe, candles, indicators, sr_zones, htf_candles=htf_candles)
 
             if signal is None:
                 return None
@@ -88,7 +89,7 @@ class StrategyRunner:
                 signal.sl = strategy.calculate_sl(signal, candles, atr)
 
             if (signal.tp1 is None or signal.tp2 is None) and atr > 0:
-                tp1, tp2 = strategy.calculate_tp(signal, candles, atr)
+                tp1, tp2 = strategy.calculate_tp(signal, candles, atr, sr_zones=sr_zones)
                 if signal.tp1 is None:
                     signal.tp1 = tp1
                 if signal.tp2 is None:

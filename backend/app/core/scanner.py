@@ -335,7 +335,10 @@ class LiveScanner:
                 print(f"[LiveScanner]    Indicators ({candle_count} candles): {', '.join(ind_status)}")
                 print(f"[LiveScanner]    S/R zones in range: {len(sr_zones)}")
 
-                # 6. Run strategies
+                # 6. Fetch HTF context
+                htf_candles = self._fetch_htf_candles(symbol, timeframe)
+
+                # 7. Run strategies
                 signals_found = 0
                 for strat_name in session.strategy_names:
                     strategy = registry.get_by_name(strat_name)
@@ -351,6 +354,7 @@ class LiveScanner:
                         candles=candle_objects,
                         indicators=indicators,
                         sr_zones=sr_zones,
+                        htf_candles=htf_candles,
                     )
 
                     if signal:
@@ -365,7 +369,6 @@ class LiveScanner:
                             telegram_queue.enqueue_watching_alert(setup_dict['id'])
                             
                             if hasattr(strategy, 'should_confirm_with_llm') and strategy.should_confirm_with_llm(signal):
-                                htf_candles = self._fetch_htf_candles(symbol, timeframe)
                                 llm_queue.enqueue_signal(
                                     watching_setup_id=setup_dict['id'],
                                     signal=signal,

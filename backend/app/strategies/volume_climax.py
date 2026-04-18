@@ -16,7 +16,7 @@ class VolumeClimaxStrategy(BaseStrategy):
     version = "1.1"
     min_confidence = 0.55
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         if len(candles) < 10 or not indicators.volume_ma_20:
             return None
 
@@ -138,7 +138,7 @@ class VolumeClimaxStrategy(BaseStrategy):
         else:
             return round(candles[-1].high + (1.0 * atr), 8)
 
-    def calculate_tp(self, signal, candles, atr):
+    def calculate_tp(self, signal, candles, atr, sr_zones=None):
         """Risk-based TP: 1.5R and 3.0R from structural stop."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)

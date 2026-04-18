@@ -91,7 +91,7 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
 
         return current_falling and prev_was_exhausted and not_oversold
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         if len(candles) < 30:
             return None
 
@@ -200,7 +200,7 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
         else:
             return round(entry + (1.8 * atr), 8)
 
-    def calculate_tp(self, signal, candles, atr):
+    def calculate_tp(self, signal, candles, atr, sr_zones=None):
         """TP1 at 2x ATR, TP2 at 4x ATR — trend continuation targets."""
         entry = signal.entry or candles[-1].close
         if signal.direction == "LONG":

@@ -24,7 +24,7 @@ class SRRejectionStrategy(BaseStrategy):
     # Minimum wick-to-range ratio for a rejection candle
     MIN_WICK_RATIO = 0.60
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         if not sr_zones or not candles:
             return None
 
@@ -145,7 +145,7 @@ class SRRejectionStrategy(BaseStrategy):
         else:
             return round(candles[-1].high + (1.0 * atr), 8)
 
-    def calculate_tp(self, signal, candles, atr):
+    def calculate_tp(self, signal, candles, atr, sr_zones=None):
         """Risk-based TP: 2R and 3.5R from structural stop."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)

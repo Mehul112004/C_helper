@@ -16,7 +16,7 @@ class MACDMomentumStrategy(BaseStrategy):
     timeframes = ["15m", "1h", "4h", "1D"]
     version = "1.1"
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         # Guard: need current and previous MACD values
         if indicators.macd_line is None or indicators.macd_signal is None:
             return None
@@ -87,7 +87,7 @@ class MACDMomentumStrategy(BaseStrategy):
             recent_high = max(c.high for c in candles[-3:])
             return round(recent_high + (0.2 * atr), 8)
 
-    def calculate_tp(self, signal, candles, atr):
+    def calculate_tp(self, signal, candles, atr, sr_zones=None):
         """Risk-based TP: 1.5R and 3.0R from structural stop."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)

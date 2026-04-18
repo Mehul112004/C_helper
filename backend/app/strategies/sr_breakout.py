@@ -22,7 +22,7 @@ class SRBreakoutStrategy(BaseStrategy):
     # Minimum body-to-range ratio for a "strong" breakout candle
     MIN_BODY_RATIO = 0.50
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         if not sr_zones or not candles or len(candles) < 3:
             return None
 
@@ -143,7 +143,7 @@ class SRBreakoutStrategy(BaseStrategy):
             recent_high = max(c.high for c in candles[-3:])
             return round(recent_high + (0.2 * atr), 8)
 
-    def calculate_tp(self, signal, candles, atr):
+    def calculate_tp(self, signal, candles, atr, sr_zones=None):
         """Risk-based TP: 2R and 3.5R — wider targets for breakout momentum."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)

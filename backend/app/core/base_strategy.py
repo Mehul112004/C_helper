@@ -126,6 +126,8 @@ class Indicators:
     bb_width_history: list = field(default_factory=list)
     # RSI history (last 5 values) for momentum hook detection
     rsi_14_history: list = field(default_factory=list)
+    # EMA 21 history (last 5 values) for slope detection
+    ema_21_history: list = field(default_factory=list)
 
     @classmethod
     def from_series(cls, series_dict: dict, idx: int) -> 'Indicators':
@@ -167,6 +169,15 @@ class Indicators:
             if val is not None:
                 rsi_14_history.append(val)
 
+        # Extract EMA 21 history (last 5 values up to and including idx)
+        ema_21_series = series_dict.get('ema_21', [])
+        ema_21_history_start = max(0, idx - 4)
+        ema_21_history = []
+        for i in range(ema_21_history_start, min(idx + 1, len(ema_21_series))):
+            val = _safe_get(ema_21_series, i)
+            if val is not None:
+                ema_21_history.append(val)
+
         return cls(
             # Current bar
             ema_9=_safe_get(series_dict.get('ema_9', []), idx),
@@ -201,6 +212,9 @@ class Indicators:
             
             # RSI history
             rsi_14_history=rsi_14_history,
+
+            # EMA 21 history
+            ema_21_history=ema_21_history,
         )
 
 
@@ -275,6 +289,7 @@ class BaseStrategy(ABC):
         candles: list[Candle],
         indicators: Indicators,
         sr_zones: list[dict],
+        htf_candles: list[Candle] = None,
     ) -> Optional[SetupSignal]:
         """
         Called on every candle close for each active timeframe.
@@ -301,7 +316,7 @@ class BaseStrategy(ABC):
             recent_high = max(c.high for c in candles[-3:])
             return round(recent_high + (0.5 * atr), 8)
 
-    def calculate_tp(self, signal: SetupSignal, candles: list[Candle], atr: float) -> tuple:
+    def calculate_tp(self, signal: SetupSignal, candles: list[Candle], atr: float, sr_zones: list[dict] = None) -> tuple:
         """
         Override to customize take-profit calculation.
         Default: Risk-based TP at 1.5R and 3.0R from structural stop.
