@@ -8,17 +8,20 @@ Indicators: EMA (9, 21, 50, 100, 200), RSI (14), MACD (12/26/9),
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import threading
 from app.models.db import db, Candle
+from app.core.config import CANDLE_WARMUP
 
 
 class IndicatorService:
     """Computes and caches technical indicators from candle data."""
 
     # In-memory cache: key = (symbol, timeframe, last_open_time_iso) → result dict
+    _cache_lock = threading.Lock()
     _cache: dict = {}
 
     # Minimum candles needed for the slowest indicator (EMA 200)
-    MIN_CANDLES_IDEAL = 250
+    MIN_CANDLES_IDEAL = CANDLE_WARMUP
     MIN_CANDLES_REQUIRED = 20  # Absolute minimum to compute anything useful
 
     # ---------- Static indicator computation methods ----------
@@ -39,8 +42,10 @@ class IndicatorService:
         avg_gain = gain.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
         avg_loss = loss.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
 
-        rs = avg_gain / avg_loss
-        rsi = 100.0 - (100.0 / (1.0 + rs))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rs = avg_gain / avg_loss
+            rsi = 100.0 - (100.0 / (1.0 + rs))
+        rsi = rsi.where(avg_loss != 0, other=100.0)  # pure uptrend → RSI 100
         return rsi
 
     @staticmethod
@@ -82,7 +87,7 @@ class IndicatorService:
             (highs - prev_close).abs(),
             (lows - prev_close).abs()
         ], axis=1).max(axis=1)
-        return tr.rolling(window=period).mean()
+        return tr.ewm(alpha=1.0/period, adjust=False, min_periods=period).mean()
 
     @staticmethod
     def compute_volume_ma(volumes: pd.Series, period: int = 20) -> pd.Series:
@@ -154,15 +159,16 @@ class IndicatorService:
 
         # Check cache
         cache_key = (symbol, timeframe, last_open_time)
-        if cache_key in cls._cache:
-            cached = cls._cache[cache_key]
-            # Update series inclusion based on request
-            if not include_series:
-                result = {**cached, 'series': None}
-            else:
-                result = cached
-            result['warnings'] = warnings
-            return result
+        with cls._cache_lock:
+            if cache_key in cls._cache:
+                cached = cls._cache[cache_key]
+                # Update series inclusion based on request
+                if not include_series:
+                    result = {**cached, 'series': None}
+                else:
+                    result = cached
+                result['warnings'] = warnings
+                return result
 
         # Compute all indicators
         closes = df['close']
@@ -248,7 +254,8 @@ class IndicatorService:
         }
 
         # Cache the full result (with series)
-        cls._cache[cache_key] = result
+        with cls._cache_lock:
+            cls._cache[cache_key] = result
 
         # Return without series if not requested
         if not include_series:
@@ -263,13 +270,14 @@ class IndicatorService:
         If symbol/timeframe provided, only invalidate matching entries.
         If neither provided, clear entire cache.
         """
-        if symbol is None and timeframe is None:
-            cls._cache.clear()
-            return
+        with cls._cache_lock:
+            if symbol is None and timeframe is None:
+                cls._cache.clear()
+                return
 
-        keys_to_remove = [
-            k for k in cls._cache
-            if (symbol is None or k[0] == symbol) and (timeframe is None or k[1] == timeframe)
-        ]
-        for k in keys_to_remove:
-            del cls._cache[k]
+            keys_to_remove = [
+                k for k in cls._cache
+                if (symbol is None or k[0] == symbol) and (timeframe is None or k[1] == timeframe)
+            ]
+            for k in keys_to_remove:
+                cls._cache.pop(k, None)
