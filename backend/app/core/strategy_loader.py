@@ -10,7 +10,9 @@ import importlib
 import inspect
 import json
 import os
+import threading
 from pathlib import Path
+from typing import Optional
 
 from app.core.base_strategy import BaseStrategy
 
@@ -25,6 +27,7 @@ class StrategyRegistry:
     """
 
     def __init__(self):
+        self._lock = threading.RLock()
         # Internal store: strategy_name → strategy instance
         self._strategies: dict[str, BaseStrategy] = {}
         # Track type: strategy_name → 'builtin' or 'custom'
@@ -63,6 +66,8 @@ class StrategyRegistry:
                 ):
                     try:
                         instance = attr()
+                        if instance.timeframes is BaseStrategy.timeframes:
+                            print(f"[StrategyRegistry] Warning: {instance.name} uses BaseStrategy.timeframes directly.")
                         self._strategies[instance.name] = instance
                         self._types[instance.name] = 'builtin'
                         self._enabled[instance.name] = True  # Default to enabled
@@ -81,24 +86,27 @@ class StrategyRegistry:
         """
         from app.models.db import db, Strategy
 
-        for name, instance in self._strategies.items():
-            existing = Strategy.query.filter_by(name=name).first()
+        existing_records = {s.name: s for s in Strategy.query.all()}
 
-            if existing:
-                # Load persisted state
-                self._enabled[name] = existing.enabled
-                instance.min_confidence = existing.min_confidence
-            else:
-                # Create new DB record
-                record = Strategy(
-                    name=name,
-                    description=instance.description,
-                    strategy_type=self._types.get(name, 'builtin'),
-                    timeframes=json.dumps(instance.timeframes),
-                    enabled=True,
-                    min_confidence=instance.min_confidence,
-                )
-                db.session.add(record)
+        with self._lock:
+            for name, instance in self._strategies.items():
+                existing = existing_records.get(name)
+    
+                if existing:
+                    # Load persisted state
+                    self._enabled[name] = existing.enabled
+                    instance.min_confidence = existing.min_confidence
+                else:
+                    # Create new DB record
+                    record = Strategy(
+                        name=name,
+                        description=instance.description,
+                        strategy_type=self._types.get(name, 'builtin'),
+                        timeframes=json.dumps(instance.timeframes),
+                        enabled=True,
+                        min_confidence=instance.min_confidence,
+                    )
+                    db.session.add(record)
 
         try:
             db.session.commit()
@@ -110,42 +118,47 @@ class StrategyRegistry:
     def get_all(self) -> list[dict]:
         """Return all registered strategies with metadata."""
         result = []
-        for name, instance in self._strategies.items():
-            result.append({
-                'name': instance.name,
-                'description': instance.description,
-                'timeframes': instance.timeframes,
-                'version': instance.version,
-                'strategy_type': self._types.get(name, 'unknown'),
-                'enabled': self._enabled.get(name, True),
-                'min_confidence': instance.min_confidence,
-            })
+        with self._lock:
+            for name, instance in self._strategies.items():
+                result.append({
+                    'name': instance.name,
+                    'description': instance.description,
+                    'timeframes': instance.timeframes,
+                    'version': instance.version,
+                    'strategy_type': self._types.get(name, 'unknown'),
+                    'enabled': self._enabled.get(name, True),
+                    'min_confidence': instance.min_confidence,
+                })
         return result
 
     def get_enabled(self) -> list[BaseStrategy]:
         """Return only currently enabled strategy instances."""
-        return [
-            instance for name, instance in self._strategies.items()
-            if self._enabled.get(name, True)
-        ]
+        with self._lock:
+            return [
+                instance for name, instance in self._strategies.items()
+                if self._enabled.get(name, True)
+            ]
 
-    def get_by_name(self, name: str) -> BaseStrategy | None:
+    def get_by_name(self, name: str) -> Optional[BaseStrategy]:
         """Look up a strategy by its name string."""
-        return self._strategies.get(name)
+        with self._lock:
+            return self._strategies.get(name)
 
     def is_enabled(self, name: str) -> bool:
         """Check if a strategy is currently enabled."""
-        return self._enabled.get(name, False)
+        with self._lock:
+            return self._enabled.get(name, False)
 
     def set_enabled(self, name: str, enabled: bool) -> bool:
         """
         Toggle a strategy on/off. Persists to DB.
         Returns True if the strategy was found and updated, False otherwise.
         """
-        if name not in self._strategies:
-            return False
-
-        self._enabled[name] = enabled
+        with self._lock:
+            if name not in self._strategies:
+                return False
+    
+            self._enabled[name] = enabled
 
         # Persist to DB
         try:
@@ -164,13 +177,14 @@ class StrategyRegistry:
         Update the minimum confidence threshold for a strategy. Persists to DB.
         Returns True if the strategy was found and updated, False otherwise.
         """
-        if name not in self._strategies:
-            return False
-
         if not 0.0 <= min_confidence <= 1.0:
             return False
 
-        self._strategies[name].min_confidence = min_confidence
+        with self._lock:
+            if name not in self._strategies:
+                return False
+    
+            self._strategies[name].min_confidence = min_confidence
 
         # Persist to DB
         try:

@@ -73,18 +73,13 @@ class StrategyRunner:
             if signal is None:
                 return None
 
-            # Validate signal
-            if signal.direction not in ("LONG", "SHORT"):
-                print(f"[StrategyRunner] Invalid direction from {strategy.name}: {signal.direction}")
-                return None
-
             # Apply minimum confidence filter
             threshold = min_confidence_override if min_confidence_override is not None else strategy.min_confidence
             if signal.confidence < threshold:
                 return None
 
             # Populate defaults
-            atr = indicators.atr_14 or 0
+            atr = indicators.atr_14 if indicators.atr_14 is not None else 0.0
 
             if signal.entry is None:
                 signal.entry = candles[-1].close
@@ -139,8 +134,8 @@ class StrategyRunner:
         # Convert DataFrame rows to Candle objects
         candle_objects = [Candle.from_df_row(row) for _, row in candle_df.iterrows()]
 
-        # Need at least 50 candles for strategies to have enough history
-        start_idx = max(50, 0)
+        MIN_HISTORY_CANDLES = 50
+        start_idx = MIN_HISTORY_CANDLES
 
         for idx in range(start_idx, len(candle_objects)):
             # Build the candle window (last 50 candles up to and including idx)

@@ -263,7 +263,7 @@ class BaseStrategy(ABC):
 
     name: str = "Unnamed Strategy"
     description: str = ""
-    timeframes: list = []
+    timeframes: list = []  # Subclasses MUST override with their own list literal
     version: str = "1.0"
     min_confidence: float = 0.5     # Configurable per strategy; session/runner can override
 
@@ -307,8 +307,8 @@ class BaseStrategy(ABC):
         Default: Risk-based TP at 1.5R and 3.0R from structural stop.
         Returns (tp1, tp2).
         """
-        entry = signal.entry or candles[-1].close
-        sl = self.calculate_sl(signal, candles, atr)
+        entry = signal.entry if signal.entry is not None else candles[-1].close
+        sl = signal.sl if signal.sl is not None else self.calculate_sl(signal, candles, atr)
         risk = abs(entry - sl)
         risk = max(risk, atr * 0.2)  # Fallback floor
         if signal.direction == "LONG":
