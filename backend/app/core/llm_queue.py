@@ -88,9 +88,12 @@ class LLMQueueManager:
                     logger.info(f"[LLMQueue] Verdict={verdict_data.verdict} confidence={verdict_data.confidence_score}/10 "
                                 f"for {signal.symbol}/{signal.strategy_name}")
                     self._handle_verdict(watching_setup_id, signal, verdict_data)
+                    # Pacing mechanism to prevent cloud inference 429 Too Many Requests
+                    time.sleep(3)
                 else:
                     if retry_count < MAX_RETRIES:
                         delay = RETRY_DELAYS[min(retry_count, len(RETRY_DELAYS) - 1)]
+                        # Groq and cloud APIs require aggressive cooldowns when 429 is hit
                         logger.warning(f"LLM returned no valid verdict. Retry {retry_count + 1}/{MAX_RETRIES} "
                                        f"after {delay}s delay.")
                         time.sleep(delay)

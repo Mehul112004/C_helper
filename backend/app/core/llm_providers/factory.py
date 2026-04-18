@@ -36,9 +36,9 @@ def get_llm_provider() -> BaseLLMProvider:
         api_key = os.environ.get("GROQ_API_KEY", "")
 
     try:
-        max_tokens = int(os.environ.get("LLM_MAX_TOKENS", 2500))
+        max_tokens = int(os.environ.get("LLM_MAX_TOKENS", 500))
     except (ValueError, TypeError):
-        max_tokens = 2500
+        max_tokens = 500
 
     logger.info(f"[LLMFactory] Initializing LLM Provider: {provider_type} (Model: {model}) at {api_url}")
 

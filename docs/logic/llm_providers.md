@@ -24,7 +24,7 @@ To switch providers, update the LLM configuration variables within the `backend/
 ```bash
 # LLM Provider Configuration
 LLM_PROVIDER=groq
-LLM_MAX_TOKENS=2500
+LLM_MAX_TOKENS=500
 
 # Overrides (If you need to define explicit credentials when the default provider isn't detected)
 # LLM_API_KEY=your_key_here

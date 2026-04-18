@@ -11,7 +11,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     Provider that interfaces with any API matching the OpenAI Chat Completions structure.
     Works for LM Studio, Groq, OpenRouter, OpenAI, etc.
     """
-    def __init__(self, api_url: str, model: str, api_key: str = None, timeout: int = 200, max_tokens: int = 2500):
+    def __init__(self, api_url: str, model: str, api_key: str = None, timeout: int = 200, max_tokens: int = 500):
         self.api_url = api_url
         self.model = model
         self.api_key = api_key
@@ -49,10 +49,19 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 logger.error(f"[{self.__class__.__name__}] No choices in response: {json.dumps(data)[:500]}")
                 return None, json.dumps(data)
                 
-            content = choices[0].get("message", {}).get("content", "").strip()
+            content = choices[0].get("message", {}).get("content", "")
+            if content is None:
+                content = ""
+            content = content.strip()
             
             if not content:
-                logger.error(f"[{self.__class__.__name__}] Empty content from LLM. Finish reason: {choices[0].get('finish_reason', 'unknown')}")
+                finish_reason = choices[0].get('finish_reason', 'unknown')
+                logger.error(f"[{self.__class__.__name__}] Empty content from LLM. Finish reason: {finish_reason}")
+                
+                # If hit by context length or TPM limits cleanly truncated
+                if finish_reason == "length":
+                    return None, f"ERROR: Truncated text/Exceeded TPM Context. Prompt might be too long."
+                
                 return None, json.dumps(data)
                 
             return content, json.dumps(data)
