@@ -110,16 +110,17 @@ class LLMQueueManager:
             return
         with self._app.app_context():
             from app.models.db import db, LLMPromptLog
-            from app.core.llm_client import LM_STUDIO_MODEL
+            from app.core.llm_providers.factory import get_llm_provider
             
             parsed_verdict = verdict_data.verdict if verdict_data else 'ERROR'
             
             try:
+                provider = get_llm_provider()
                 new_log = LLMPromptLog(
                     watching_setup_id=watching_setup_id,
                     symbol=signal.symbol,
                     strategy_name=signal.strategy_name,
-                    model_name=LM_STUDIO_MODEL,
+                    model_name=provider.model,
                     prompt_text=prompt,
                     response_text=raw_response,
                     parsed_verdict=parsed_verdict
