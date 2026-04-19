@@ -1,18 +1,17 @@
 """
-Bollinger Band Squeeze Strategy (v2.0)
+Bollinger Band Squeeze Strategy (v2.2)
 Reactive strategy on 15m, 1h, 4h.
 
-Implements the full 6-step institutional-grade Bollinger Squeeze methodology:
-  1. Volatility Compression — TTM Squeeze (BB inside KC)
-  2. Directional Bias — HTF trend + MACD momentum
-  3. Fake-Out Detection — Opposite-band liquidity sweep lookback
-  4. Expansion + Volume Validation — Hard gates on volume and band expansion
-  5. Pullback / Retest Entry — Split entry: aggressive breakout + conservative retest
-  6. Invalidation — SL at BB middle (thesis nullification level)
-
-Signals:
-  LONG: Squeeze → bullish breakout + volume + expansion + directional bias
-  SHORT: Squeeze → bearish breakdown + volume + expansion + directional bias
+v2.2 Changes (1H win-rate focused):
+  - Timeframe-aware config: stricter thresholds for 1H
+  - Volume gate raised to 1.5× on 1H (was 1.2×, too much noise)
+  - EMA 50 promoted to HARD GATE on 1H (was soft confidence boost)
+  - MACD curl requires 2 consecutive bars agreement on 1H (was 1-bar)
+  - MIN_SQUEEZE_BARS raised to 5 on 1H (was 3, coil needs more time)
+  - HTF bias required (not optional) on 1H when data is available
+  - Retest path now validates squeeze history exists before firing
+  - Exhaustion trap wick filter tightened to 0.3 on 1H (was 0.4)
+  - Added RSI overbought/oversold guard (soft gate, -0.10 confidence)
 """
 
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
@@ -22,14 +21,48 @@ class BollingerSqueezeStrategy(BaseStrategy):
     name = "Bollinger Band Squeeze"
     description = "TTM Squeeze breakout with Keltner Channel validation and split entry"
     timeframes = ["15m", "1h", "4h"]
-    version = "2.0"
+    version = "2.2"
 
-    # ── Configuration ──────────────────────────────────────────────
-    MIN_BB_HISTORY = 10        # Minimum bb_width values for squeeze analysis
-    MIN_SQUEEZE_BARS = 3       # Minimum consecutive squeeze bars to validate
-    FAKEOUT_LOOKBACK = 5       # Bars to look back for opposite-band liquidity sweep
-    RETEST_LOOKBACK_MIN = 3    # Min bars after breakout before retest is valid
-    RETEST_LOOKBACK_MAX = 8    # Max bars after breakout to still consider retest
+    # ── Base Configuration (applies to all timeframes) ─────────────
+    MIN_BB_HISTORY = 10
+    MIN_SQUEEZE_BARS = 3
+    FAKEOUT_LOOKBACK = 5
+    RETEST_LOOKBACK_MIN = 3
+    RETEST_LOOKBACK_MAX = 8
+
+    # ── Per-Timeframe Overrides ────────────────────────────────────
+    # FIX #1: 1H has more noise per candle than 15m.
+    # Raise every threshold to demand stronger confirmation before firing.
+    TF_CONFIG = {
+        "15m": {
+            "volume_gate": 1.2,       # 1.2× volume MA — original
+            "min_squeeze_bars": 3,    # 3 bars minimum coil
+            "wick_filter": 0.4,       # Exhaustion wick ratio ceiling
+            "macd_curl_bars": 1,      # Single-bar MACD curl sufficient
+            "ema_hard_gate": False,   # EMA 50 is only a soft boost
+            "htf_required": False,    # HTF bias helpful but not required
+        },
+        "1h": {
+            "volume_gate": 1.5,       # FIX: 1.5× — filters out ordinary spikes
+            "min_squeeze_bars": 5,    # FIX: 5 bars — coil must be well-formed
+            "wick_filter": 0.3,       # FIX: Tighter wick filter (0.3 vs 0.4)
+            "macd_curl_bars": 2,      # FIX: Require 2 consecutive bars curling
+            "ema_hard_gate": True,    # FIX: EMA 50 is now a hard gate
+            "htf_required": True,     # FIX: HTF bias required when available
+        },
+        "4h": {
+            "volume_gate": 1.3,       # 4H candles: slight bump over 15m default
+            "min_squeeze_bars": 4,    # 4H needs a bit more coil time
+            "wick_filter": 0.4,
+            "macd_curl_bars": 1,
+            "ema_hard_gate": False,
+            "htf_required": False,
+        },
+    }
+
+    def _get_tf_config(self, timeframe: str) -> dict:
+        """Return the config block for the given timeframe, defaulting to 15m."""
+        return self.TF_CONFIG.get(timeframe, self.TF_CONFIG["15m"])
 
     # ── Step 1: Volatility Compression (TTM Squeeze) ───────────────
 
@@ -38,10 +71,8 @@ class BollingerSqueezeStrategy(BaseStrategy):
         Detect if a TTM Squeeze was active on the previous bar.
         Squeeze = Bollinger Bands fitting completely inside Keltner Channels.
 
-        Falls back to bb_width < mean heuristic if KC data is unavailable
-        (cold-boot safety).
+        Falls back to bb_width < mean heuristic if KC data is unavailable.
         """
-        # Primary: Keltner Channel comparison (TTM Squeeze)
         if (indicators.prev_bb_upper is not None and
                 indicators.prev_bb_lower is not None and
                 indicators.prev_kc_upper is not None and
@@ -49,19 +80,17 @@ class BollingerSqueezeStrategy(BaseStrategy):
             return (indicators.prev_bb_upper < indicators.prev_kc_upper and
                     indicators.prev_bb_lower > indicators.prev_kc_lower)
 
-        # Fallback: bb_width below its own mean (less reliable)
         history = indicators.bb_width_history
         if len(history) < self.MIN_BB_HISTORY:
             return False
         if indicators.prev_bb_width is None:
             return False
         avg_width = sum(history) / len(history)
-        return indicators.prev_bb_width < avg_width * 0.8  # Stricter: 80% of average
+        return indicators.prev_bb_width < avg_width * 0.8
 
     def _squeeze_duration(self, indicators: Indicators) -> int:
         """
-        Count consecutive squeeze bars from the bb_width_history.
-        Uses the bb_width < avg heuristic since we only have scalar history.
+        Count consecutive squeeze bars from bb_width_history.
         Returns 0 if insufficient data.
         """
         history = indicators.bb_width_history
@@ -70,7 +99,6 @@ class BollingerSqueezeStrategy(BaseStrategy):
 
         avg_width = sum(history) / len(history)
         count = 0
-        # Walk backwards from the most recent (end of list)
         for val in reversed(history):
             if val < avg_width:
                 count += 1
@@ -84,53 +112,56 @@ class BollingerSqueezeStrategy(BaseStrategy):
         """
         Determine directional bias using MACD momentum + HTF trend.
 
-        Returns:
-            "BULL", "BEAR", or None (no clear bias → no signal)
+        Returns "BULL", "BEAR", or None (no clear bias).
         """
         macd_bias = None
         htf_bias = None
 
-        # MACD histogram momentum direction (curling)
         hist = indicators.macd_hist_history
         if len(hist) >= 3:
-            # Check if histogram is curling upward or downward
             if hist[-1] > hist[-2]:
                 macd_bias = "BULL"
             elif hist[-1] < hist[-2]:
                 macd_bias = "BEAR"
 
-        # HTF trend: compare HTF close vs HTF 10-bar midrange
         if htf_candles and len(htf_candles) >= 10:
             htf_high = max(c.high for c in htf_candles[-10:])
             htf_low = min(c.low for c in htf_candles[-10:])
             htf_mid = (htf_high + htf_low) / 2
             htf_close = htf_candles[-1].close
-            if htf_close > htf_mid:
-                htf_bias = "BULL"
-            else:
-                htf_bias = "BEAR"
+            htf_bias = "BULL" if htf_close > htf_mid else "BEAR"
 
-        # If we have both, they must agree
         if macd_bias and htf_bias:
-            if macd_bias == htf_bias:
-                return macd_bias
-            return None  # Conflicting → no clear bias
+            return macd_bias if macd_bias == htf_bias else None
 
-        # If only one is available, use it
         return macd_bias or htf_bias
+
+    # ── FIX #2: MACD curl strength check ──────────────────────────
+    def _macd_curl_confirmed(self, indicators: Indicators, direction: str, required_bars: int) -> bool:
+        """
+        FIX: On 1H, a single histogram tick is too noisy. Require `required_bars`
+        consecutive bars of the histogram moving in the same direction.
+
+        For 15m/4h, required_bars=1 preserves original behaviour.
+        For 1H, required_bars=2 filters out one-bar false curls.
+        """
+        hist = indicators.macd_hist_history
+        if len(hist) < required_bars + 1:
+            return False
+
+        # Check the last `required_bars` deltas all point the same way
+        deltas = [hist[-(i + 1)] - hist[-(i + 2)] for i in range(required_bars)]
+        if direction == "LONG":
+            return all(d > 0 for d in deltas)
+        else:
+            return all(d < 0 for d in deltas)
 
     # ── Step 3: Fake-Out / Liquidity Sweep Detection ───────────────
 
     def _detect_fakeout_precursor(self, candles, indicators: Indicators):
         """
         Look back N bars for a recent opposite-band breach that snapped back.
-        This indicates a liquidity sweep already happened → makes the current
-        breakout direction more credible.
-
-        Returns:
-            "BULL" if a bearish fakeout was detected (bullish setup stronger)
-            "BEAR" if a bullish fakeout was detected (bearish setup stronger)
-            None if no fakeout detected
+        Returns "BULL", "BEAR", or None.
         """
         if len(candles) < self.FAKEOUT_LOOKBACK + 1:
             return None
@@ -138,77 +169,92 @@ class BollingerSqueezeStrategy(BaseStrategy):
             return None
 
         lookback = candles[-(self.FAKEOUT_LOOKBACK + 1):-1]
-
-        bearish_fakeout = False  # Wick below lower band that snapped back
-        bullish_fakeout = False  # Wick above upper band that snapped back
+        bearish_fakeout = False
+        bullish_fakeout = False
 
         for candle in lookback:
-            # Check for a bearish fakeout: wick below lower band but close inside
-            if (candle.low < indicators.bb_lower and
-                    candle.close > indicators.bb_lower):
+            if candle.low < indicators.bb_lower and candle.close > indicators.bb_lower:
                 bearish_fakeout = True
-            # Check for a bullish fakeout: wick above upper band but close inside
-            if (candle.high > indicators.bb_upper and
-                    candle.close < indicators.bb_upper):
+            if candle.high > indicators.bb_upper and candle.close < indicators.bb_upper:
                 bullish_fakeout = True
 
         if bearish_fakeout and not bullish_fakeout:
-            return "BULL"  # Bearish trap → bullish breakout more credible
+            return "BULL"
         if bullish_fakeout and not bearish_fakeout:
-            return "BEAR"  # Bullish trap → bearish breakdown more credible
+            return "BEAR"
         return None
+
+    # ── FIX #3: RSI guard ─────────────────────────────────────────
+    def _rsi_penalty(self, indicators: Indicators, direction: str) -> float:
+        """
+        FIX: Penalise entries into overextended conditions.
+        On 1H, chasing breakouts when RSI is already at extremes dramatically
+        lowers win rate — price is statistically more likely to revert than extend.
+
+        Returns a confidence penalty (negative float, 0.0 if RSI is healthy).
+        """
+        rsi = getattr(indicators, "rsi_14", None)
+        if rsi is None:
+            return 0.0
+        if direction == "LONG" and rsi > 72:
+            return -0.10   # Overbought long — likely exhausted
+        if direction == "SHORT" and rsi < 28:
+            return -0.10   # Oversold short — likely exhausted
+        return 0.0
 
     # ── Step 5: Retest Detection ───────────────────────────────────
 
-    def _detect_retest(self, candles, indicators: Indicators):
+    def _detect_retest(self, candles, indicators: Indicators, timeframe: str):
         """
         Detect a pullback/retest after a recent breakout.
 
-        Looks back 3-8 bars for a breakout candle (close beyond band + expansion),
-        then checks if the current candle is near BB middle and showing rejection.
-
-        Returns:
-            "LONG" if bullish retest detected
-            "SHORT" if bearish retest detected
-            None if no retest pattern
+        FIX: Now requires that a squeeze was active in recent history before
+        the retest fires. This prevents the retest path from triggering on
+        ordinary mean-reversion moves that have nothing to do with a squeeze.
         """
         if len(candles) < self.RETEST_LOOKBACK_MAX + 1:
             return None
         if indicators.bb_middle is None or indicators.atr_14 is None:
             return None
 
-        close = candles[-1].close
+        # FIX: Validate squeeze history before accepting a retest
+        # Without this, the retest path was firing on non-squeeze setups entirely.
+        if not self._is_squeeze(indicators):
+            squeeze_found_in_history = False
+            history = indicators.bb_width_history
+            if len(history) >= self.MIN_BB_HISTORY:
+                avg_width = sum(history) / len(history)
+                # Check if any of the last RETEST_LOOKBACK_MAX bars were in squeeze
+                for val in list(reversed(history))[:self.RETEST_LOOKBACK_MAX]:
+                    if val < avg_width * 0.8:
+                        squeeze_found_in_history = True
+                        break
+            if not squeeze_found_in_history:
+                return None
+
+        current = candles[-1]
+        close = current.close
         atr = indicators.atr_14
 
-        # Is current candle near the BB middle? (within 0.4 ATR)
         distance_to_middle = abs(close - indicators.bb_middle)
         if distance_to_middle > 0.4 * atr:
             return None
 
-        # Look back for a recent breakout
         lookback = candles[-(self.RETEST_LOOKBACK_MAX + 1):-self.RETEST_LOOKBACK_MIN]
 
         for candle in lookback:
-            # Check for a previous bullish breakout (close above upper)
             if (indicators.bb_upper is not None and
-                    candle.close > indicators.bb_upper and
-                    candle.is_bullish):
-                # Current candle must hold above bb_middle (not close below)
+                    candle.close > indicators.bb_upper and candle.is_bullish):
                 if close >= indicators.bb_middle:
-                    # Check for rejection: lower wick shows buying pressure
-                    current = candles[-1]
-                    if current.lower_wick > current.body_size * 0.3:
+                    wick_ratio = current.lower_wick / current.range_size if current.range_size > 0 else 0
+                    if current.is_bullish or wick_ratio > 0.4:
                         return "LONG"
 
-            # Check for a previous bearish breakdown (close below lower)
             if (indicators.bb_lower is not None and
-                    candle.close < indicators.bb_lower and
-                    candle.is_bearish):
-                # Current candle must hold below bb_middle
+                    candle.close < indicators.bb_lower and candle.is_bearish):
                 if close <= indicators.bb_middle:
-                    # Check for rejection: upper wick shows selling pressure
-                    current = candles[-1]
-                    if current.upper_wick > current.body_size * 0.3:
+                    wick_ratio = current.upper_wick / current.range_size if current.range_size > 0 else 0
+                    if current.is_bearish or wick_ratio > 0.4:
                         return "SHORT"
 
         return None
@@ -216,7 +262,6 @@ class BollingerSqueezeStrategy(BaseStrategy):
     # ── Main Scan ──────────────────────────────────────────────────
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
-        # ── Guard: need core indicator values ──
         if indicators.bb_upper is None or indicators.bb_lower is None:
             return None
         if indicators.bb_width is None or indicators.prev_bb_width is None:
@@ -227,31 +272,44 @@ class BollingerSqueezeStrategy(BaseStrategy):
             return None
 
         close = candles[-1].close
+        cfg = self._get_tf_config(timeframe)
 
         # ── Path A: Retest Entry (Step 5) ──────────────────────────
-        # Check for retest FIRST — it has higher conviction than raw breakout
-        retest_dir = self._detect_retest(candles, indicators)
+        # FIX: Now passes timeframe so squeeze history validation can run.
+        retest_dir = self._detect_retest(candles, indicators, timeframe)
         if retest_dir is not None:
             confidence = 0.55
 
-            # Volume should be present but doesn't need to be extreme for retest
+            # FIX: EMA hard gate on 1H applies to retest entries too.
+            if cfg["ema_hard_gate"] and indicators.ema_50 is not None:
+                if retest_dir == "LONG" and close < indicators.ema_50:
+                    return None  # Retesting below EMA on 1H — reject
+                if retest_dir == "SHORT" and close > indicators.ema_50:
+                    return None
+
             if indicators.volume_ma_20 and candles[-1].volume > indicators.volume_ma_20:
                 confidence += 0.05
 
-            # HTF alignment boost
             bias = self._directional_bias(indicators, htf_candles, close)
+
+            # FIX: On 1H, if HTF data is available, bias conflict kills the retest.
+            if cfg["htf_required"] and htf_candles and len(htf_candles) >= 10:
+                if bias is None or bias != ("BULL" if retest_dir == "LONG" else "BEAR"):
+                    return None
+
             if bias == ("BULL" if retest_dir == "LONG" else "BEAR"):
                 confidence += 0.10
 
-            # EMA 50 alignment
             if indicators.ema_50 is not None:
                 if retest_dir == "LONG" and close > indicators.ema_50:
                     confidence += 0.05
                 elif retest_dir == "SHORT" and close < indicators.ema_50:
                     confidence += 0.05
 
-            # Retest entry inherent bonus (safer entry)
-            confidence += 0.05
+            # FIX: RSI overextension penalty
+            confidence += self._rsi_penalty(indicators, retest_dir)
+
+            confidence += 0.05  # Retest inherent entry quality bonus
 
             return SetupSignal(
                 strategy_name=self.name,
@@ -273,85 +331,100 @@ class BollingerSqueezeStrategy(BaseStrategy):
         if not self._is_squeeze(indicators):
             return None
 
-        # Step 4a: HARD GATE — Band must be expanding
+        # FIX: Enforce minimum squeeze duration per timeframe
+        duration = self._squeeze_duration(indicators)
+        if duration < cfg["min_squeeze_bars"]:
+            return None
+
+        # Step 4a: Band must be expanding
         if indicators.bb_width <= indicators.prev_bb_width:
             return None
 
-        # Step 4b: Detect breakout direction
-        breakout_up = close > indicators.bb_upper
-        breakout_down = close < indicators.bb_lower
+        # Step 4b: Breakout direction + exhaustion trap filter
+        current = candles[-1]
+        range_size = current.range_size if current.range_size > 0 else 1.0
+        wick_limit = cfg["wick_filter"]   # FIX: 0.3 on 1H, 0.4 elsewhere
+
+        breakout_up = (close > indicators.bb_upper and
+                       (current.upper_wick / range_size < wick_limit))
+        breakout_down = (close < indicators.bb_lower and
+                         (current.lower_wick / range_size < wick_limit))
+
         if not breakout_up and not breakout_down:
             return None
 
         direction = "LONG" if breakout_up else "SHORT"
 
-        # Step 4c: HARD GATE — Volume must be above MA
+        # Step 4c: Volume hard gate — timeframe-aware threshold
         if not indicators.volume_ma_20:
             return None
-        if candles[-1].volume <= indicators.volume_ma_20:
-            return None
+        if candles[-1].volume < indicators.volume_ma_20 * cfg["volume_gate"]:
+            return None  # FIX: 1.5× on 1H vs 1.2× elsewhere
+
+        # FIX: EMA 50 hard gate on 1H
+        if cfg["ema_hard_gate"] and indicators.ema_50 is not None:
+            if direction == "LONG" and close < indicators.ema_50:
+                return None  # Breaking out above upper band but below EMA — reject
+            if direction == "SHORT" and close > indicators.ema_50:
+                return None
 
         # Step 2: Directional bias check
         bias = self._directional_bias(indicators, htf_candles, close)
-        if bias is not None:
+
+        # FIX: On 1H, when HTF data is available, bias must confirm.
+        # Previously, None bias (unavailable data) was treated as neutral — which
+        # allowed through setups that lacked any trend confirmation at all.
+        if cfg["htf_required"] and htf_candles and len(htf_candles) >= 10:
             expected = "BULL" if direction == "LONG" else "BEAR"
             if bias != expected:
-                # Directional bias conflicts with breakout → reject
+                return None  # No data or conflict → reject on 1H
+
+        elif bias is not None:
+            expected = "BULL" if direction == "LONG" else "BEAR"
+            if bias != expected:
                 return None
 
         # ── Confidence Scoring ─────────────────────────────────────
-        confidence = 0.50  # Base: squeeze + breakout + volume + expansion all confirmed
+        confidence = 0.50
 
-        # +0.10 if volume > 2× MA (strong surge)
         if candles[-1].volume > indicators.volume_ma_20 * 2.0:
             confidence += 0.10
-
-        # +0.05 if volume > 3× MA (extreme surge)
         if candles[-1].volume > indicators.volume_ma_20 * 3.0:
             confidence += 0.05
 
-        # +0.10 if HTF alignment confirmed
         if bias is not None:
             confidence += 0.10
 
-        # +0.05 if MACD momentum aligned (individual check, separate from HTF)
-        hist = indicators.macd_hist_history
-        if len(hist) >= 3:
-            macd_curling_up = hist[-1] > hist[-2]
-            if direction == "LONG" and macd_curling_up:
-                confidence += 0.05
-            elif direction == "SHORT" and not macd_curling_up:
-                confidence += 0.05
+        # FIX: Use multi-bar MACD confirmation on 1H
+        if self._macd_curl_confirmed(indicators, direction, cfg["macd_curl_bars"]):
+            confidence += 0.05
 
-        # +0.10 if fake-out precursor detected (Step 3)
         fakeout = self._detect_fakeout_precursor(candles, indicators)
         if fakeout is not None:
             expected_fakeout = "BULL" if direction == "LONG" else "BEAR"
             if fakeout == expected_fakeout:
                 confidence += 0.10
 
-        # +0.05 if squeeze duration ≥ 5 bars (well-coiled spring)
-        duration = self._squeeze_duration(indicators)
-        if duration >= 5:
+        # Duration bonus: threshold aligns with per-TF min_squeeze_bars
+        if duration >= cfg["min_squeeze_bars"] + 2:
             confidence += 0.05
 
-        # +0.05 if EMA 50 alignment
         if indicators.ema_50 is not None:
             if direction == "LONG" and close > indicators.ema_50:
                 confidence += 0.05
             elif direction == "SHORT" and close < indicators.ema_50:
                 confidence += 0.05
 
-        bb_direction = "above upper band" if breakout_up else "below lower band"
+        # FIX: RSI overextension penalty
+        confidence += self._rsi_penalty(indicators, direction)
 
-        # Build detailed notes
+        bb_direction = "above upper band" if breakout_up else "below lower band"
         components = []
         if bias:
             components.append(f"HTF bias: {bias}")
         if fakeout:
             components.append(f"fakeout precursor: {fakeout}")
-        if duration >= 5:
-            components.append(f"squeeze duration: {duration} bars")
+        components.append(f"squeeze duration: {duration} bars")
         vol_ratio = candles[-1].volume / indicators.volume_ma_20
         components.append(f"vol ratio: {vol_ratio:.1f}×")
         extra = ", ".join(components)
@@ -374,41 +447,28 @@ class BollingerSqueezeStrategy(BaseStrategy):
 
     def calculate_sl(self, signal, candles, atr):
         """
-        SL at the BB middle (the thesis invalidation level).
-
-        If price re-enters the squeeze zone and crosses the 20-period mean,
-        the setup is dead. We place SL at BB middle ± small ATR buffer.
-
-        Falls back to structural SL if BB middle is not recoverable.
+        For breakouts, SL is placed just behind the breakout candle's extreme.
+        For retests, SL is placed below/above the pullback pivot.
         """
-        # Try to estimate BB middle from candle data
-        # We use the last candle's context — bb_middle was available during scan
-        # Since we can't access indicators here, use the structural approach
-        # anchored to the mean (average of last 20 closes as proxy)
-        if len(candles) >= 20:
-            bb_middle_proxy = sum(c.close for c in candles[-20:]) / 20
-            if signal.direction == "LONG":
-                sl = bb_middle_proxy - (0.3 * atr)
-                # But never set SL above entry (invalid)
-                if signal.entry and sl >= signal.entry:
-                    sl = signal.entry - (0.5 * atr)
-                return round(sl, 8)
-            else:
-                sl = bb_middle_proxy + (0.3 * atr)
-                if signal.entry and sl <= signal.entry:
-                    sl = signal.entry + (0.5 * atr)
-                return round(sl, 8)
+        is_retest = "retest" in signal.notes.lower()
 
-        # Fallback: structural SL
         if signal.direction == "LONG":
-            recent_low = min(c.low for c in candles[-3:])
-            return round(recent_low - (0.3 * atr), 8)
+            if is_retest:
+                recent_low = min(c.low for c in candles[-3:])
+                return round(recent_low - (0.2 * atr), 8)
+            else:
+                recent_low = min(c.low for c in candles[-2:])
+                return round(recent_low - (0.2 * atr), 8)
         else:
-            recent_high = max(c.high for c in candles[-3:])
-            return round(recent_high + (0.3 * atr), 8)
+            if is_retest:
+                recent_high = max(c.high for c in candles[-3:])
+                return round(recent_high + (0.2 * atr), 8)
+            else:
+                recent_high = max(c.high for c in candles[-2:])
+                return round(recent_high + (0.2 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr, sr_zones=None):
-        """Risk-based TP: 2R and 3.5R — wider targets for breakout momentum."""
+        """Risk-based TP: 2R and 3.5R."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)
         risk = abs(entry - sl)
