@@ -44,14 +44,17 @@ def _make_indicators(**overrides):
         rsi_14=50.0, macd_line=0.5, macd_signal=0.4,
         macd_histogram=0.1, bb_upper=105.0, bb_middle=100.0,
         bb_lower=95.0, bb_width=0.10, atr_14=2.0,
+        kc_upper=108.0, kc_lower=92.0,
         volume_ma_20=1000.0,
         prev_ema_9=99.0, prev_ema_21=100.0,
         prev_macd_line=0.3, prev_macd_signal=0.4,
         prev_macd_histogram=-0.1, prev_rsi_14=50.0,
         prev_bb_upper=104.0, prev_bb_lower=96.0,
         prev_bb_width=0.08,
+        prev_kc_upper=108.0, prev_kc_lower=92.0,
         bb_width_history=[0.08] * 20,
         rsi_14_history=[50.0] * 5,
+        macd_hist_history=[0.05, 0.08, 0.10],
     )
     defaults.update(overrides)
     return Indicators(**defaults)
@@ -214,96 +217,231 @@ class TestRSIReversal:
 # =============================================================================
 
 class TestBollingerSqueeze:
-    """Tests for the Bollinger Band Squeeze strategy."""
+    """Tests for the Bollinger Band Squeeze strategy (v2.0 — 6-step methodology)."""
 
     @pytest.fixture
     def strategy(self):
         from app.strategies.bollinger_squeeze import BollingerSqueezeStrategy
         return BollingerSqueezeStrategy()
 
-    def test_bullish_breakout(self, strategy):
-        """Squeeze → close breaks above upper band + volume → LONG."""
-        candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=1500.0)]
-
-        # bb_width_history: narrow widths (squeeze), avg ~0.06
-        # prev_bb_width < avg → squeeze was active
-        indicators = _make_indicators(
-            bb_upper=106.0,
-            bb_lower=94.0,
-            bb_width=0.12,          # Current: expanding (breakout)
-            prev_bb_width=0.04,     # Previous: narrow (squeeze)
-            bb_width_history=[0.05, 0.04, 0.06, 0.05, 0.04, 0.05, 0.06, 0.04, 0.05, 0.04,
-                              0.06, 0.05, 0.04, 0.05, 0.06, 0.04, 0.05, 0.04, 0.05, 0.04],
+    def _squeeze_indicators(self, **overrides):
+        """Create indicators in a valid squeeze state (BB inside KC on prev bar)."""
+        defaults = dict(
+            # Current bar: bands expanding (breakout)
+            bb_upper=106.0, bb_middle=100.0, bb_lower=94.0,
+            bb_width=0.12,
+            kc_upper=108.0, kc_lower=92.0,
+            # Previous bar: BB inside KC = squeeze
+            prev_bb_upper=103.0, prev_bb_lower=97.0,
+            prev_bb_width=0.06,
+            prev_kc_upper=108.0, prev_kc_lower=92.0,
+            # BB width history: narrow (squeeze persisted for several bars)
+            bb_width_history=[0.06, 0.05, 0.06, 0.05, 0.06, 0.05, 0.06, 0.05, 0.06, 0.05,
+                              0.06, 0.05, 0.06, 0.05, 0.06, 0.05, 0.06, 0.05, 0.06, 0.06],
+            # MACD histogram curling upward (bullish momentum)
+            macd_hist_history=[0.01, 0.02, 0.04, 0.06, 0.08],
+            # Volume and EMA context
             volume_ma_20=1000.0,
             ema_50=97.0,
+            atr_14=2.0,
         )
+        defaults.update(overrides)
+        return _make_indicators(**defaults)
+
+    # ── Test 1: Bullish breakout with Keltner squeeze ──────────────
+
+    def test_bullish_breakout_with_keltner_squeeze(self, strategy):
+        """BB-inside-KC squeeze → breakout above upper band + volume → LONG."""
+        candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=1500.0)]
+        indicators = self._squeeze_indicators()
 
         signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
         assert signal is not None
         assert signal.direction == "LONG"
+        assert "BREAKOUT" in signal.notes
+        assert "breakout" in signal.notes.lower()
 
-    def test_bearish_breakout(self, strategy):
-        """Squeeze → close breaks below lower band + volume → SHORT."""
+    # ── Test 2: Bearish breakout with Keltner squeeze ──────────────
+
+    def test_bearish_breakout_with_keltner_squeeze(self, strategy):
+        """BB-inside-KC squeeze → breakout below lower band + volume → SHORT."""
         candles = _make_candle_list(49) + [_make_candle(close=92.0, volume=1500.0)]
-
-        indicators = _make_indicators(
-            bb_upper=106.0,
-            bb_lower=94.0,
-            bb_width=0.12,
-            prev_bb_width=0.04,
-            bb_width_history=[0.05] * 20,  # avg = 0.05, prev 0.04 < 0.05 = squeeze
-            volume_ma_20=1000.0,
-            ema_50=97.0,
+        indicators = self._squeeze_indicators(
+            # MACD curling downward for bearish bias
+            macd_hist_history=[-0.01, -0.02, -0.04, -0.06, -0.08],
         )
 
         signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
         assert signal is not None
         assert signal.direction == "SHORT"
 
-    def test_no_squeeze(self, strategy):
-        """Normal width (prev_bb_width >= avg) → None."""
-        candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=1500.0)]
+    # ── Test 3: No Keltner squeeze → no signal ─────────────────────
 
-        indicators = _make_indicators(
-            bb_upper=106.0,
-            bb_lower=94.0,
-            bb_width=0.12,
-            prev_bb_width=0.12,     # Previous width is ABOVE the average
-            bb_width_history=[0.10] * 20,  # avg = 0.10, prev 0.12 > 0.10 = NOT squeeze
-            volume_ma_20=1000.0,
+    def test_no_keltner_squeeze_no_signal(self, strategy):
+        """BB NOT inside KC on previous bar → None, even with band touch."""
+        candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=1500.0)]
+        indicators = self._squeeze_indicators(
+            # Previous bar: BB wider than KC → NOT a squeeze
+            prev_bb_upper=110.0,  # BB upper > KC upper
+            prev_bb_lower=90.0,   # BB lower < KC lower
+            prev_kc_upper=108.0,
+            prev_kc_lower=92.0,
         )
 
         signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
         assert signal is None
 
-    def test_breakout_no_volume(self, strategy):
-        """Squeeze breakout but weak volume → Low Confidence Signal."""
-        candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=800.0)]
+    # ── Test 4: Breakout without volume → blocked by hard gate ─────
 
-        indicators = _make_indicators(
-            bb_upper=106.0,
-            bb_lower=94.0,
-            bb_width=0.12,
-            prev_bb_width=0.04,
-            bb_width_history=[0.05] * 20,
-            volume_ma_20=1000.0,  # 800 < 1000 * 1.2 = 1200 → weak
+    def test_breakout_no_volume_hard_gate(self, strategy):
+        """Squeeze + breakout but volume < MA → None (hard gate)."""
+        candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=800.0)]
+        indicators = self._squeeze_indicators(volume_ma_20=1000.0)
+
+        signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
+        assert signal is None
+
+    # ── Test 5: Breakout without band expansion → blocked ──────────
+
+    def test_breakout_no_expansion_hard_gate(self, strategy):
+        """Squeeze + band touch but bands NOT expanding → None."""
+        candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=1500.0)]
+        indicators = self._squeeze_indicators(
+            bb_width=0.05,       # Current width
+            prev_bb_width=0.06,  # Previous width is LARGER → contracting, not expanding
+        )
+
+        signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
+        assert signal is None
+
+    # ── Test 6: Fake-out precursor boosts confidence ───────────────
+
+    def test_fakeout_precursor_boosts_confidence(self, strategy):
+        """Opposite-band wick snap + breakout → higher confidence."""
+        # Build candles where a recent candle wicked below the lower band
+        # but closed inside — a bearish fakeout (bullish precursor)
+        fakeout_candle = _make_candle(
+            open_=96.0, high=97.0, low=93.0, close=96.5,  # low < bb_lower (94)
+            volume=1000.0, time_offset_hours=47,
+        )
+        padding = _make_candle_list(48)
+        breakout_candle = _make_candle(close=107.0, volume=2500.0, time_offset_hours=49)
+        candles = padding + [fakeout_candle, breakout_candle]
+
+        indicators = self._squeeze_indicators()
+        signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
+
+        assert signal is not None
+        assert signal.direction == "LONG"
+
+        # Compare to a signal without fakeout — should have lower confidence
+        clean_candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=2500.0)]
+        clean_signal = strategy.scan("BTCUSDT", "4h", clean_candles, indicators, [])
+        assert clean_signal is not None
+        assert signal.confidence > clean_signal.confidence
+
+    # ── Test 7: Retest entry after breakout ─────────────────────────
+
+    def test_retest_entry_after_breakout(self, strategy):
+        """Recent breakout + pullback to BB middle + hold → LONG retest."""
+        # Build a candle history with a breakout 5 bars ago, then pullback
+        candles = _make_candle_list(44)
+
+        # Breakout candle 5 bars ago (close above bb_upper=106)
+        candles.append(_make_candle(
+            open_=105.0, high=108.0, low=104.5, close=107.5,
+            volume=2000.0, time_offset_hours=44,
+        ))
+
+        # 4 bars of pullback toward the mean
+        candles.append(_make_candle(close=106.0, open_=107.0, high=107.5, low=105.5, time_offset_hours=45))
+        candles.append(_make_candle(close=104.0, open_=106.0, high=106.5, low=103.5, time_offset_hours=46))
+        candles.append(_make_candle(close=102.0, open_=104.0, high=104.5, low=101.5, time_offset_hours=47))
+        candles.append(_make_candle(close=101.0, open_=102.0, high=102.5, low=100.5, time_offset_hours=48))
+
+        # Current candle: near BB middle (100), showing bullish rejection
+        # lower_wick = min(open,close) - low = 100.3 - 99.0 = 1.3
+        # body = |close - open| = |100.5 - 100.3| = 0.2
+        # lower_wick (1.3) > body (0.2) * 0.3 = 0.06 ✓
+        candles.append(_make_candle(
+            open_=100.3, high=100.8, low=99.0, close=100.5,
+            volume=1100.0, time_offset_hours=49,
+        ))
+
+        indicators = self._squeeze_indicators(
+            bb_upper=106.0, bb_middle=100.0, bb_lower=94.0,
+            atr_14=2.0,
         )
 
         signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
         assert signal is not None
-        assert round(signal.confidence, 2) == 0.75  # Base 0.55 + EMA align 0.10 + expanding 0.10
+        assert signal.direction == "LONG"
+        assert "retest" in signal.notes.lower()
 
-    def test_insufficient_bb_history(self, strategy):
-        """Too few bb_width_history values → None."""
+    # ── Test 8: HTF bearish bias blocks long breakout ──────────────
+
+    def test_htf_bearish_blocks_long(self, strategy):
+        """Squeeze + bullish breakout but HTF trend is bearish → None."""
         candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=1500.0)]
-        indicators = _make_indicators(
-            bb_upper=106.0, bb_lower=94.0,
-            bb_width=0.12, prev_bb_width=0.04,
-            bb_width_history=[0.05] * 5,  # Only 5 values < MIN_BB_HISTORY (10)
-            volume_ma_20=1000.0,
+
+        # HTF candles showing bearish trend (close below HTF midrange)
+        htf_candles = [
+            _make_candle(close=110.0, high=112.0, low=108.0, time_offset_hours=i * 4)
+            for i in range(5)
+        ] + [
+            _make_candle(close=95.0, high=100.0, low=93.0, time_offset_hours=i * 4)
+            for i in range(5, 10)
+        ]
+        # HTF midrange = (112 + 93) / 2 = 102.5, close=95 < 102.5 → BEAR
+
+        # MACD also bearish to align with HTF
+        indicators = self._squeeze_indicators(
+            macd_hist_history=[-0.02, -0.04, -0.06, -0.08, -0.10],
         )
-        signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
+
+        signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [], htf_candles=htf_candles)
         assert signal is None
+
+    # ── Test 9: Invalidation SL at BB middle ───────────────────────
+
+    def test_invalidation_sl_at_bb_middle(self, strategy):
+        """SL should be at BB middle (20-SMA proxy), not at structural low."""
+        candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=1500.0)]
+        indicators = self._squeeze_indicators()
+
+        signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
+        assert signal is not None
+
+        atr = 2.0
+        sl = strategy.calculate_sl(signal, candles, atr)
+
+        # SL should be near the 20-bar average close, not the structural low.
+        # With our dummy candles, the 20-bar avg close is ~ last 20 closes.
+        avg_20 = sum(c.close for c in candles[-20:]) / 20
+        # SL = avg_20 - 0.3 * 2.0 = avg_20 - 0.6
+        expected_sl = round(avg_20 - 0.3 * atr, 8)
+        assert abs(sl - expected_sl) < 0.01
+
+        # It should NOT be at the structural low - 0.2*ATR
+        structural_low = min(c.low for c in candles[-3:])
+        structural_sl = structural_low - 0.2 * atr
+        assert sl != round(structural_sl, 8)
+
+    # ── Test 10: Squeeze duration too short ─────────────────────────
+
+    def test_squeeze_duration_too_short(self, strategy):
+        """Squeeze detected via KC but insufficient BB history → fallback works."""
+        candles = _make_candle_list(49) + [_make_candle(close=107.0, volume=1500.0)]
+        indicators = self._squeeze_indicators(
+            bb_width_history=[0.06] * 5,  # Only 5 values < MIN_BB_HISTORY
+            # But KC squeeze is still valid (prev BB inside KC)
+        )
+
+        # KC squeeze should still work even with short history
+        signal = strategy.scan("BTCUSDT", "4h", candles, indicators, [])
+        # Signal should fire — KC is the primary squeeze method, not bb_width history
+        assert signal is not None
+        assert signal.direction == "LONG"
 
 
 # =============================================================================

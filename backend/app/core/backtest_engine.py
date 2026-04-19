@@ -62,6 +62,7 @@ class BacktestEngine:
         rsi_14 = IndicatorService.compute_rsi(closes, 14)
         macd = IndicatorService.compute_macd(closes, 12, 26, 9)
         bb = IndicatorService.compute_bollinger(closes, 20, 2.0)
+        kc = IndicatorService.compute_keltner(highs, lows, closes, 20, 10, 1.5)
         atr_14 = IndicatorService.compute_atr(highs, lows, closes, 14)
         vol_ma_20 = IndicatorService.compute_volume_ma(volumes, 20)
 
@@ -88,6 +89,8 @@ class BacktestEngine:
             'bb_middle': _series_to_list(bb['bb_middle']),
             'bb_lower': _series_to_list(bb['bb_lower']),
             'bb_width': _series_to_list(bb['bb_width']),
+            'kc_upper': _series_to_list(kc['kc_upper']),
+            'kc_lower': _series_to_list(kc['kc_lower']),
             'atr_14': _series_to_list(atr_14),
             'volume_ma_20': _series_to_list(vol_ma_20),
         }

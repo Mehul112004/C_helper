@@ -108,6 +108,8 @@ class Indicators:
     bb_middle: Optional[float] = None
     bb_lower: Optional[float] = None
     bb_width: Optional[float] = None
+    kc_upper: Optional[float] = None
+    kc_lower: Optional[float] = None
     atr_14: Optional[float] = None
     volume_ma_20: Optional[float] = None
 
@@ -121,6 +123,8 @@ class Indicators:
     prev_bb_upper: Optional[float] = None
     prev_bb_lower: Optional[float] = None
     prev_bb_width: Optional[float] = None
+    prev_kc_upper: Optional[float] = None
+    prev_kc_lower: Optional[float] = None
 
     # Bollinger Band width history (last 20 values) for squeeze detection
     bb_width_history: list = field(default_factory=list)
@@ -128,6 +132,8 @@ class Indicators:
     rsi_14_history: list = field(default_factory=list)
     # EMA 21 history (last 5 values) for slope detection
     ema_21_history: list = field(default_factory=list)
+    # MACD histogram history (last 5 values) for momentum direction
+    macd_hist_history: list = field(default_factory=list)
 
     @classmethod
     def from_series(cls, series_dict: dict, idx: int) -> 'Indicators':
@@ -178,6 +184,15 @@ class Indicators:
             if val is not None:
                 ema_21_history.append(val)
 
+        # Extract MACD histogram history (last 5 values up to and including idx)
+        macd_hist_series = series_dict.get('macd_histogram', [])
+        macd_hist_start = max(0, idx - 4)
+        macd_hist_history = []
+        for i in range(macd_hist_start, min(idx + 1, len(macd_hist_series))):
+            val = _safe_get(macd_hist_series, i)
+            if val is not None:
+                macd_hist_history.append(val)
+
         return cls(
             # Current bar
             ema_9=_safe_get(series_dict.get('ema_9', []), idx),
@@ -193,6 +208,8 @@ class Indicators:
             bb_middle=_safe_get(series_dict.get('bb_middle', []), idx),
             bb_lower=_safe_get(series_dict.get('bb_lower', []), idx),
             bb_width=_safe_get(series_dict.get('bb_width', []), idx),
+            kc_upper=_safe_get(series_dict.get('kc_upper', []), idx),
+            kc_lower=_safe_get(series_dict.get('kc_lower', []), idx),
             atr_14=_safe_get(series_dict.get('atr_14', []), idx),
             volume_ma_20=_safe_get(series_dict.get('volume_ma_20', []), idx),
 
@@ -206,6 +223,8 @@ class Indicators:
             prev_bb_upper=_safe_get(series_dict.get('bb_upper', []), idx - 1),
             prev_bb_lower=_safe_get(series_dict.get('bb_lower', []), idx - 1),
             prev_bb_width=_safe_get(series_dict.get('bb_width', []), idx - 1),
+            prev_kc_upper=_safe_get(series_dict.get('kc_upper', []), idx - 1),
+            prev_kc_lower=_safe_get(series_dict.get('kc_lower', []), idx - 1),
 
             # Bollinger width history
             bb_width_history=bb_width_history,
@@ -215,6 +234,9 @@ class Indicators:
 
             # EMA 21 history
             ema_21_history=ema_21_history,
+
+            # MACD histogram history
+            macd_hist_history=macd_hist_history,
         )
 
 

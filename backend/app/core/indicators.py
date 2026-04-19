@@ -90,6 +90,18 @@ class IndicatorService:
         return tr.ewm(alpha=1.0/period, adjust=False, min_periods=period).mean()
 
     @staticmethod
+    def compute_keltner(
+        highs: pd.Series, lows: pd.Series, closes: pd.Series,
+        ema_period: int = 20, atr_period: int = 10, multiplier: float = 1.5,
+    ) -> dict:
+        """Keltner Channels: EMA ± (multiplier × ATR)."""
+        ema = closes.ewm(span=ema_period, adjust=False).mean()
+        atr = IndicatorService.compute_atr(highs, lows, closes, atr_period)
+        upper = ema + (multiplier * atr)
+        lower = ema - (multiplier * atr)
+        return {'kc_upper': upper, 'kc_middle': ema, 'kc_lower': lower}
+
+    @staticmethod
     def compute_volume_ma(volumes: pd.Series, period: int = 20) -> pd.Series:
         """Simple Moving Average of volume."""
         return volumes.rolling(window=period).mean()
@@ -184,6 +196,7 @@ class IndicatorService:
         rsi_14 = cls.compute_rsi(closes, 14)
         macd = cls.compute_macd(closes, 12, 26, 9)
         bb = cls.compute_bollinger(closes, 20, 2.0)
+        kc = cls.compute_keltner(highs, lows, closes, 20, 10, 1.5)
         atr_14 = cls.compute_atr(highs, lows, closes, 14)
         vol_ma_20 = cls.compute_volume_ma(volumes, 20)
 
@@ -208,6 +221,8 @@ class IndicatorService:
             'bb_middle': _safe_last(bb['bb_middle']),
             'bb_lower': _safe_last(bb['bb_lower']),
             'bb_width': _safe_last(bb['bb_width']),
+            'kc_upper': _safe_last(kc['kc_upper']),
+            'kc_lower': _safe_last(kc['kc_lower']),
             'atr_14': _safe_last(atr_14),
             'volume_ma_20': _safe_last(vol_ma_20),
         }
@@ -239,6 +254,8 @@ class IndicatorService:
             'bb_middle': _series_to_list(bb['bb_middle']),
             'bb_lower': _series_to_list(bb['bb_lower']),
             'bb_width': _series_to_list(bb['bb_width']),
+            'kc_upper': _series_to_list(kc['kc_upper']),
+            'kc_lower': _series_to_list(kc['kc_lower']),
             'atr_14': _series_to_list(atr_14),
             'volume_ma_20': _series_to_list(vol_ma_20),
         }

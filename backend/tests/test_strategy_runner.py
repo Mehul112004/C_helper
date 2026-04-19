@@ -34,13 +34,13 @@ def _make_candle_list(n=50, base_close=100.0):
         for i in range(n)
     ]
 
-
+p
 class AlwaysSignalStrategy(BaseStrategy):
     """Test strategy that always returns a LONG signal."""
     name = "Always Signal"
     timeframes = ["1h", "4h"]
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         return SetupSignal(
             strategy_name=self.name,
             symbol=symbol,
@@ -56,7 +56,7 @@ class NeverSignalStrategy(BaseStrategy):
     name = "Never Signal"
     timeframes = ["1h", "4h"]
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         return None
 
 
@@ -65,7 +65,7 @@ class CrashingStrategy(BaseStrategy):
     name = "Crasher"
     timeframes = ["1h", "4h"]
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         raise RuntimeError("Intentional crash for testing")
 
 
@@ -75,7 +75,7 @@ class LowConfidenceStrategy(BaseStrategy):
     timeframes = ["1h"]
     min_confidence = 0.7
 
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones):
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         return SetupSignal(
             strategy_name=self.name,
             symbol=symbol,
@@ -169,9 +169,9 @@ class TestRunSingleScan:
 
         assert signal is not None
         assert signal.entry == 100.0
-        assert signal.sl == 96.0    # 98.0 (low) - 0.2 * 10 = 96.0
-        assert signal.tp1 == 106.0  # risk = 100 - 96 = 4. tp1 = 100 + 1.5 * 4
-        assert signal.tp2 == 112.0  # tp2 = 100 + 3.0 * 4
+        assert signal.sl == 93.0    # 98.0 (low) - 0.5 * 10 = 93.0
+        assert signal.tp1 == 110.5  # risk = 100 - 93 = 7. tp1 = 100 + 1.5 * 7
+        assert signal.tp2 == 121.0  # tp2 = 100 + 3.0 * 7
 
 
 class TestScanHistorical:
