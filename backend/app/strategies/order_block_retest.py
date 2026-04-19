@@ -1,13 +1,13 @@
 """
-Institutional Order Block (OB) Retest Strategy v3.1 — Full SMC Edition
+Institutional Order Block (OB) Retest Strategy v3.2 — Production Edition
 
 Smart Money Concept focusing on institutional accumulation/distribution zones
-with multi-confluence gating:
-  1. OB Identification   — Variable-length impulse, ATR-normalized displacement
-  2. Displacement Proof   — FVG imbalance + Break of Structure (BOS) validation
-  3. Retest Phase         — OB mitigation tracking (only first-touch zones)
-  4. Trigger Confirmation — Rejection wick + candle-close momentum shift + Mean Threshold
-  5. Risk Management      — Strict MIN_RR gates and MAX_RISK caps to prevent low RR trades
+with realistic market microstructure gating:
+  1. OB Identification   — Variable-length impulse, 1.5x ATR normalized displacement
+  2. Displacement Proof  — Break of Structure (Hard Gate) + FVG (Soft Gate / Confidence)
+  3. Retest Phase        — OB mitigation tracking (only first-touch zones)
+  4. Trigger Confirmation— 0.5x wick rejection + candle-close momentum + Defense line intact
+  5. Risk Management     — Strict MIN_RR gates and MAX_RISK caps
 
 Bullish OB: The last down candle before a significant bullish impulse.
 Bearish OB: The last up candle before a significant bearish impulse.
@@ -20,21 +20,19 @@ from app.core.fractals import find_fractal_points
 class OrderBlockRetestStrategy(BaseStrategy):
     name = "Order Block Retest"
     description = (
-        "Detects institutional OB retests gated by ATR displacement, "
-        "BOS confirmation, FVG imbalance, and strict Risk/Reward filters. "
-        "Targets structural liquidity pools for exits."
+        "Detects institutional OB retests gated by realistic ATR displacement, "
+        "structural BOS confirmation, and dynamic Risk/Reward targeting."
     )
     timeframes = ["1h", "4h", "1d"]
-    version = "3.1"
+    version = "3.2"
     min_confidence = 0.60
 
     # ── Configuration ──────────────────────────────────────────────
     LOOKBACK = 20               # How far back to search for OB candidates
     MAX_IMPULSE_LEN = 5         # Maximum consecutive impulse candles
     MIN_IMPULSE_LEN = 2         # Minimum consecutive impulse candles
-    ATR_DISPLACEMENT = 2.0      # Impulse must move ≥ N × ATR(14)
+    ATR_DISPLACEMENT = 1.5      # Realistic institutional displacement (1.5x ATR)
     BOS_LOOKBACK = 15           # Candles before OB to find prior swing for BOS
-    COOLDOWN_CANDLES = 4        # Suppress re-fire within N candles of OB zone
     PIVOT_BARS = 3              # Fractal pivot detection window for TP targets
     TP_FRACTAL_LOOKBACK = 40    # How many candles to search for liquidity pools
     
@@ -43,7 +41,7 @@ class OrderBlockRetestStrategy(BaseStrategy):
     MAX_RISK_ATR = 2.5          # Reject OBs that are too wide (Risk > 2.5x ATR)
     STRICT_HTF_ALIGNMENT = True # If True, strictly bans counter-trend setups
 
-    # ── Unified FVG Detection ──────────────────────────────────────
+    # ── Unified FVG Detection (Now a Soft Gate) ────────────────────
     def _find_fvg(
         self,
         candles: list[Candle],
@@ -77,7 +75,7 @@ class OrderBlockRetestStrategy(BaseStrategy):
 
         return None
 
-    # ── Break of Structure Detection ───────────────────────────────
+    # ── Break of Structure Detection (Hard Gate) ───────────────────
     def _has_bos(
         self,
         candles: list[Candle],
@@ -123,24 +121,6 @@ class OrderBlockRetestStrategy(BaseStrategy):
                 if c.close > ob_high: return True
         return False
 
-    # ── Cooldown Check ─────────────────────────────────────────────
-    def _in_cooldown(
-        self,
-        candles: list[Candle],
-        ob_low: float,
-        ob_high: float,
-        direction: str,
-    ) -> bool:
-        for c in candles[-(self.COOLDOWN_CANDLES + 1) : -1]:
-            in_zone = ob_low <= c.close <= ob_high or ob_low <= c.low <= ob_high
-            if direction == "BULL":
-                has_rejection = c.lower_wick > c.body_size * 0.8
-            else:
-                has_rejection = c.upper_wick > c.body_size * 0.8
-            if in_zone and has_rejection:
-                return True
-        return False
-
     # ── Main Scan ──────────────────────────────────────────────────
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         if len(candles) < self.LOOKBACK + self.MAX_IMPULSE_LEN + 5:
@@ -155,14 +135,15 @@ class OrderBlockRetestStrategy(BaseStrategy):
         if current.body_size > 2 * indicators.atr_14:
             return None
 
-        # HTF Trend Alignment
+        # HTF Trend Alignment (Smoothed Baseline Fix)
         htf_bias = None
         if htf_candles and len(htf_candles) >= 20:
-            htf_mid = (htf_candles[-20].high + htf_candles[-20].low) / 2
-            htf_bias = "BULL" if htf_candles[-1].close > htf_mid else "BEAR"
+            htf_baseline = sum(c.close for c in htf_candles[-20:]) / 20
+            htf_bias = "BULL" if htf_candles[-1].close > htf_baseline else "BEAR"
 
+        # Corrected Scanner Boundary Fix
         scan_start = max(0, len(candles) - self.LOOKBACK)
-        scan_end = len(candles) - self.MAX_IMPULSE_LEN - 1
+        scan_end = len(candles) - self.MIN_IMPULSE_LEN - 1
 
         for i in range(scan_start, scan_end):
             for direction in ("BULL", "BEAR"):
@@ -208,7 +189,7 @@ class OrderBlockRetestStrategy(BaseStrategy):
 
         impulse_end_idx = ob_idx + len(impulse_candles)
 
-        # ATR-Normalized Displacement
+        # ATR-Normalized Displacement (Lowered to realistic 1.5x)
         if direction == "BULL":
             impulse_size = impulse_candles[-1].close - impulse_candles[0].open
         else:
@@ -217,13 +198,13 @@ class OrderBlockRetestStrategy(BaseStrategy):
         if impulse_size < indicators.atr_14 * self.ATR_DISPLACEMENT:
             return None
 
-        # FVG & BOS Validation
-        fvg = self._find_fvg(candles, ob_idx + 1, impulse_end_idx, direction)
-        if fvg is None: return None
-
+        # BOS Validation (Hard Gate - Proof of Structure Shift)
         if not self._has_bos(candles, ob_idx, impulse_end_idx, direction):
             return None
 
+        # FVG Detection (Soft Gate - Proof of Speed, used for confidence)
+        fvg = self._find_fvg(candles, ob_idx + 1, impulse_end_idx, direction)
+        
         ob_high, ob_low = ob_candle.high, ob_candle.low
 
         # Mitigation Check
@@ -239,23 +220,19 @@ class OrderBlockRetestStrategy(BaseStrategy):
         if not price_in_zone:
             return None
 
-        # Mean Threshold Defense (The close MUST be in the "defended" half)
-        ob_mid = (ob_high + ob_low) / 2.0
-        if direction == "BULL" and current.close < ob_mid: return None
-        if direction == "BEAR" and current.close > ob_mid: return None
-
-        # Cooldown Check
-        if self._in_cooldown(candles, ob_low, ob_high, direction):
-            return None
+        # Institutional Defense Line Fix
+        # Price is allowed to sweep below the mid-line, but MUST not close beyond the absolute OB boundary.
+        if direction == "BULL" and current.close < ob_low: return None
+        if direction == "BEAR" and current.close > ob_high: return None
 
         # HTF Strict Alignment
         if self.STRICT_HTF_ALIGNMENT and htf_bias:
             if direction == "BULL" and htf_bias == "BEAR": return None
             if direction == "BEAR" and htf_bias == "BULL": return None
 
-        # Rejection Wick & Momentum Validation
-        if direction == "BULL" and current.lower_wick < current.body_size * 0.8: return None
-        if direction == "BEAR" and current.upper_wick < current.body_size * 0.8: return None
+        # Realistic Wick & Momentum Validation (Lowered to 0.5x body)
+        if direction == "BULL" and current.lower_wick < current.body_size * 0.5: return None
+        if direction == "BEAR" and current.upper_wick < current.body_size * 0.5: return None
 
         candle_mid = (current.high + current.low) / 2
         if direction == "BULL" and current.close <= candle_mid: return None
@@ -278,19 +255,19 @@ class OrderBlockRetestStrategy(BaseStrategy):
             
         risk = max(risk, indicators.atr_14 * 0.1)
 
-        # Target Selection & Min RR Gate
+        # Target Selection 
         tp1, tp2 = self._compute_structural_tp(
             candles, entry, sl, risk, direction, indicators.atr_14
         )
         
-        # Final Verification: Does the structural target offer a tradeable RR?
+        # Note: Outer MIN_RR gate removed because _compute_structural_tp enforces it 
+        # structurally, or explicitly returns math-derived targets that meet MIN_RR.
         projected_rr = abs(tp1 - entry) / risk
-        if projected_rr < self.MIN_RR:
-            return None 
 
         # Confidence Scoring
-        confidence = 0.72  # Boosted base due to strict gating
+        confidence = 0.55  # Lowered base
 
+        if fvg: confidence += 0.15 # Massive boost for FVG presence
         if direction == "BULL" and indicators.rsi_14 and indicators.rsi_14 < 55: confidence += 0.08
         if direction == "BEAR" and indicators.rsi_14 and indicators.rsi_14 > 45: confidence += 0.08
         if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20: confidence += 0.08
@@ -299,6 +276,8 @@ class OrderBlockRetestStrategy(BaseStrategy):
         confidence = min(max(confidence, 0.0), 1.0)
         if confidence < self.min_confidence:
             return None
+
+        fvg_text = f"FVG: {fvg['bottom']:.2f}-{fvg['top']:.2f}. " if fvg else "No FVG (Soft Gate). "
 
         return SetupSignal(
             strategy_name=self.name,
@@ -313,7 +292,7 @@ class OrderBlockRetestStrategy(BaseStrategy):
             notes=(
                 f"{'Bullish' if direction == 'BULL' else 'Bearish'} OB retest. "
                 f"OB zone: {ob_low:.2f}-{ob_high:.2f}. "
-                f"FVG: {fvg['bottom']:.2f}-{fvg['top']:.2f}. "
+                f"{fvg_text}"
                 f"Proj. RR: {projected_rr:.2f}R. "
                 f"HTF bias: {htf_bias or 'N/A'}."
             ),
