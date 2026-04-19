@@ -1,219 +1,384 @@
 """
-Institutional Order Block (OB) Retest Strategy — Confluent Edition
+Institutional Order Block (OB) Retest Strategy v3.1 — Full SMC Edition
+
 Smart Money Concept focusing on institutional accumulation/distribution zones
-WITH Fair Value Gap (FVG) imbalance validation.
+with multi-confluence gating:
+  1. OB Identification   — Variable-length impulse, ATR-normalized displacement
+  2. Displacement Proof   — FVG imbalance + Break of Structure (BOS) validation
+  3. Retest Phase         — OB mitigation tracking (only first-touch zones)
+  4. Trigger Confirmation — Rejection wick + candle-close momentum shift + Mean Threshold
+  5. Risk Management      — Strict MIN_RR gates and MAX_RISK caps to prevent low RR trades
 
 Bullish OB: The last down candle before a significant bullish impulse.
-When price returns to this block's range, we look for a rejection to go LONG
-— BUT ONLY if the impulse away from the OB left behind an unmitigated FVG,
-proving aggressive institutional displacement.
-
 Bearish OB: The last up candle before a significant bearish impulse.
-Requires the impulse to have left an FVG to confirm institutional intent.
-
-An Order Block without an FVG lacks the "imbalance" required to prove
-aggressive institutional involvement — these are filtered out.
 """
 
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from app.core.fractals import find_fractal_points
 
 
 class OrderBlockRetestStrategy(BaseStrategy):
     name = "Order Block Retest"
-    description = "Detects OB retests only when the departure impulse left an unmitigated FVG — enforces displacement confluence."
+    description = (
+        "Detects institutional OB retests gated by ATR displacement, "
+        "BOS confirmation, FVG imbalance, and strict Risk/Reward filters. "
+        "Targets structural liquidity pools for exits."
+    )
     timeframes = ["1h", "4h", "1d"]
-    version = "2.0"
+    version = "3.1"
     min_confidence = 0.60
 
-    def _impulse_has_bullish_fvg(self, candles: list[Candle], impulse_start: int, impulse_end: int) -> dict | None:
-        """
-        Check whether the bullish impulse (from impulse_start to impulse_end)
-        left behind an unmitigated Fair Value Gap.
+    # ── Configuration ──────────────────────────────────────────────
+    LOOKBACK = 20               # How far back to search for OB candidates
+    MAX_IMPULSE_LEN = 5         # Maximum consecutive impulse candles
+    MIN_IMPULSE_LEN = 2         # Minimum consecutive impulse candles
+    ATR_DISPLACEMENT = 2.0      # Impulse must move ≥ N × ATR(14)
+    BOS_LOOKBACK = 15           # Candles before OB to find prior swing for BOS
+    COOLDOWN_CANDLES = 4        # Suppress re-fire within N candles of OB zone
+    PIVOT_BARS = 3              # Fractal pivot detection window for TP targets
+    TP_FRACTAL_LOOKBACK = 40    # How many candles to search for liquidity pools
+    
+    # ── Risk & Filter Configuration ────────────────────────────────
+    MIN_RR = 1.5                # Absolute minimum Risk/Reward ratio allowed
+    MAX_RISK_ATR = 2.5          # Reject OBs that are too wide (Risk > 2.5x ATR)
+    STRICT_HTF_ALIGNMENT = True # If True, strictly bans counter-trend setups
 
-        A bullish FVG exists when candle[j].low > candle[j-2].high for some j
-        in the impulse range — i.e., a gap between wicks that price never filled.
+    # ── Unified FVG Detection ──────────────────────────────────────
+    def _find_fvg(
+        self,
+        candles: list[Candle],
+        impulse_start: int,
+        impulse_end: int,
+        direction: str,
+    ) -> dict | None:
+        upper_bound = min(impulse_end + 1, len(candles))
 
-        Returns the FVG zone dict or None.
-        """
-        for j in range(impulse_start + 2, min(impulse_end + 1, len(candles))):
+        for j in range(impulse_start + 2, upper_bound):
             c_before = candles[j - 2]
             c_after = candles[j]
-            if c_after.low > c_before.high:
+
+            if direction == "BULL" and c_after.low > c_before.high:
                 fvg_top = c_after.low
                 fvg_bottom = c_before.high
-
-                # Check if the FVG has been mitigated (price returned and filled it)
-                # by any candle after the FVG formation up to now
-                mitigated = False
                 for k in range(j + 1, len(candles) - 1):
                     if candles[k].low <= fvg_bottom:
-                        mitigated = True
                         break
+                else:
+                    return {"top": fvg_top, "bottom": fvg_bottom, "index": j}
 
-                if not mitigated:
-                    return {'top': fvg_top, 'bottom': fvg_bottom, 'index': j}
-
-        return None
-
-    def _impulse_has_bearish_fvg(self, candles: list[Candle], impulse_start: int, impulse_end: int) -> dict | None:
-        """
-        Check whether the bearish impulse left behind a bearish FVG.
-        A bearish FVG: candle[j].high < candle[j-2].low
-        """
-        for j in range(impulse_start + 2, min(impulse_end + 1, len(candles))):
-            c_before = candles[j - 2]
-            c_after = candles[j]
-            if c_after.high < c_before.low:
+            elif direction == "BEAR" and c_after.high < c_before.low:
                 fvg_top = c_before.low
                 fvg_bottom = c_after.high
-
-                mitigated = False
                 for k in range(j + 1, len(candles) - 1):
                     if candles[k].high >= fvg_top:
-                        mitigated = True
                         break
-
-                if not mitigated:
-                    return {'top': fvg_top, 'bottom': fvg_bottom, 'index': j}
-
-        return None
-
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
-        if len(candles) < 20:
-            return None
-
-        current_candle = candles[-1]
-
-        # ═══════ Exhaustion Guards ═══════
-        if indicators.atr_14 and current_candle.body_size > 2 * indicators.atr_14:
-            return None
-
-        # Look back to find a valid order block (OB) created in the past 15 candles
-        for i in range(len(candles) - 15, len(candles) - 3):
-            if i < 0:
-                continue
-
-            # ═══════ Bullish OB: Bearish candle → strong bullish impulse ═══════
-            if candles[i].is_bearish:
-                # Check next 2 candles for strong bullish impulse
-                impulse_candles = candles[i+1:i+3]
-                if len(impulse_candles) >= 2 and all(c.is_bullish for c in impulse_candles):
-                    impulse_size = impulse_candles[-1].close - impulse_candles[0].open
-                    avg_body = sum(c.body_size for c in impulse_candles) / len(impulse_candles)
-
-                    if impulse_size > avg_body * 1.5:
-                        ob_high = candles[i].high
-                        ob_low = candles[i].low
-
-                        # ★ CONFLUENCE: The impulse must have left a bullish FVG ★
-                        fvg = self._impulse_has_bullish_fvg(candles, i + 1, i + 3)
-                        if fvg is None:
-                            continue  # No FVG displacement — skip this OB
-
-                        # Verify price has retraced to the OB
-                        if ob_low <= current_candle.low <= ob_high or ob_low <= current_candle.close <= ob_high:
-                            # RSI exhaustion: already overbought → don't go LONG
-                            if indicators.rsi_14 is not None and indicators.rsi_14 > 75:
-                                continue
-
-                            # Rejection condition: lower wick shows buying pressure
-                            if current_candle.lower_wick > current_candle.body_size * 0.8:
-                                confidence = 0.67  # Higher base due to FVG confluence
-
-                                # +0.08 if RSI supports (not overbought)
-                                if indicators.rsi_14 and indicators.rsi_14 < 55:
-                                    confidence += 0.08
-
-                                # +0.08 if volume confirms
-                                if indicators.volume_ma_20 and current_candle.volume > indicators.volume_ma_20:
-                                    confidence += 0.08
-
-                                # +0.05 bonus if the FVG is still completely unmitigated
-                                if fvg:
-                                    confidence += 0.05
-
-                                return SetupSignal(
-                                    strategy_name=self.name,
-                                    symbol=symbol,
-                                    timeframe=timeframe,
-                                    direction="LONG",
-                                    confidence=min(confidence, 1.0),
-                                    entry=current_candle.close,
-                                    notes=(
-                                        f"Bullish OB retest with FVG confluence. "
-                                        f"OB zone: {ob_low:.2f}-{ob_high:.2f}. "
-                                        f"Unmitigated FVG: {fvg['bottom']:.2f}-{fvg['top']:.2f}. "
-                                        f"Originated at {candles[i].open_time.strftime('%Y-%m-%d %H:%M')}."
-                                    ),
-                                )
-
-            # ═══════ Bearish OB: Bullish candle → strong bearish impulse ═══════
-            if candles[i].is_bullish:
-                impulse_candles = candles[i+1:i+3]
-                if len(impulse_candles) >= 2 and all(c.is_bearish for c in impulse_candles):
-                    impulse_size = impulse_candles[0].open - impulse_candles[-1].close
-                    avg_body = sum(c.body_size for c in impulse_candles) / len(impulse_candles)
-
-                    if impulse_size > avg_body * 1.5:
-                        ob_high = candles[i].high
-                        ob_low = candles[i].low
-
-                        # ★ CONFLUENCE: The impulse must have left a bearish FVG ★
-                        fvg = self._impulse_has_bearish_fvg(candles, i + 1, i + 3)
-                        if fvg is None:
-                            continue
-
-                        if ob_low <= current_candle.high <= ob_high or ob_low <= current_candle.close <= ob_high:
-                            # RSI exhaustion: already oversold → don't go SHORT
-                            if indicators.rsi_14 is not None and indicators.rsi_14 < 25:
-                                continue
-
-                            if current_candle.upper_wick > current_candle.body_size * 0.8:
-                                confidence = 0.67
-
-                                if indicators.rsi_14 and indicators.rsi_14 > 45:
-                                    confidence += 0.08
-
-                                if indicators.volume_ma_20 and current_candle.volume > indicators.volume_ma_20:
-                                    confidence += 0.08
-
-                                if fvg:
-                                    confidence += 0.05
-
-                                return SetupSignal(
-                                    strategy_name=self.name,
-                                    symbol=symbol,
-                                    timeframe=timeframe,
-                                    direction="SHORT",
-                                    confidence=min(confidence, 1.0),
-                                    entry=current_candle.close,
-                                    notes=(
-                                        f"Bearish OB retest with FVG confluence. "
-                                        f"OB zone: {ob_low:.2f}-{ob_high:.2f}. "
-                                        f"Unmitigated FVG: {fvg['bottom']:.2f}-{fvg['top']:.2f}. "
-                                        f"Originated at {candles[i].open_time.strftime('%Y-%m-%d %H:%M')}."
-                                    ),
-                                )
+                else:
+                    return {"top": fvg_top, "bottom": fvg_bottom, "index": j}
 
         return None
 
-    def calculate_sl(self, signal, candles, atr):
-        """Structural SL: Behind the rejection candle's wick at the OB zone."""
-        if signal.direction == "LONG":
-            return round(candles[-1].low - (1.0 * atr), 8)
+    # ── Break of Structure Detection ───────────────────────────────
+    def _has_bos(
+        self,
+        candles: list[Candle],
+        ob_index: int,
+        impulse_end: int,
+        direction: str,
+    ) -> bool:
+        lookback_start = max(0, ob_index - self.BOS_LOOKBACK)
+        if lookback_start >= ob_index:
+            return False
+
+        prior_candles = candles[lookback_start:ob_index]
+        if not prior_candles:
+            return False
+
+        impulse_candles = candles[ob_index + 1 : impulse_end + 1]
+        if not impulse_candles:
+            return False
+
+        if direction == "BULL":
+            prior_high = max(c.high for c in prior_candles)
+            impulse_high = max(c.high for c in impulse_candles)
+            return impulse_high > prior_high
         else:
-            return round(candles[-1].high + (1.0 * atr), 8)
+            prior_low = min(c.low for c in prior_candles)
+            impulse_low = min(c.low for c in impulse_candles)
+            return impulse_low < prior_low
+
+    # ── OB Mitigation Check ────────────────────────────────────────
+    def _ob_is_mitigated(
+        self,
+        candles: list[Candle],
+        impulse_end: int,
+        ob_low: float,
+        ob_high: float,
+        direction: str,
+    ) -> bool:
+        for k in range(impulse_end + 1, len(candles) - 1):
+            c = candles[k]
+            if direction == "BULL":
+                if c.close < ob_low: return True
+            else:
+                if c.close > ob_high: return True
+        return False
+
+    # ── Cooldown Check ─────────────────────────────────────────────
+    def _in_cooldown(
+        self,
+        candles: list[Candle],
+        ob_low: float,
+        ob_high: float,
+        direction: str,
+    ) -> bool:
+        for c in candles[-(self.COOLDOWN_CANDLES + 1) : -1]:
+            in_zone = ob_low <= c.close <= ob_high or ob_low <= c.low <= ob_high
+            if direction == "BULL":
+                has_rejection = c.lower_wick > c.body_size * 0.8
+            else:
+                has_rejection = c.upper_wick > c.body_size * 0.8
+            if in_zone and has_rejection:
+                return True
+        return False
+
+    # ── Main Scan ──────────────────────────────────────────────────
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
+        if len(candles) < self.LOOKBACK + self.MAX_IMPULSE_LEN + 5:
+            return None
+
+        if indicators.atr_14 is None:
+            return None
+
+        current = candles[-1]
+
+        # Exhaustion Guard
+        if current.body_size > 2 * indicators.atr_14:
+            return None
+
+        # HTF Trend Alignment
+        htf_bias = None
+        if htf_candles and len(htf_candles) >= 20:
+            htf_mid = (htf_candles[-20].high + htf_candles[-20].low) / 2
+            htf_bias = "BULL" if htf_candles[-1].close > htf_mid else "BEAR"
+
+        scan_start = max(0, len(candles) - self.LOOKBACK)
+        scan_end = len(candles) - self.MAX_IMPULSE_LEN - 1
+
+        for i in range(scan_start, scan_end):
+            for direction in ("BULL", "BEAR"):
+                signal = self._evaluate_ob_candidate(
+                    candles, indicators, i, direction,
+                    symbol, timeframe, current, htf_bias,
+                )
+                if signal is not None:
+                    return signal
+
+        return None
+
+    def _evaluate_ob_candidate(
+        self,
+        candles: list[Candle],
+        indicators: Indicators,
+        ob_idx: int,
+        direction: str,
+        symbol: str,
+        timeframe: str,
+        current: Candle,
+        htf_bias: str | None,
+    ) -> SetupSignal | None:
+        
+        ob_candle = candles[ob_idx]
+
+        if direction == "BULL" and not ob_candle.is_bearish: return None
+        if direction == "BEAR" and not ob_candle.is_bullish: return None
+
+        # Find Variable-Length Impulse
+        impulse_candles = []
+        for j in range(ob_idx + 1, min(ob_idx + 1 + self.MAX_IMPULSE_LEN, len(candles) - 1)):
+            c = candles[j]
+            if direction == "BULL" and c.is_bullish:
+                impulse_candles.append(c)
+            elif direction == "BEAR" and c.is_bearish:
+                impulse_candles.append(c)
+            else:
+                break
+
+        if len(impulse_candles) < self.MIN_IMPULSE_LEN:
+            return None
+
+        impulse_end_idx = ob_idx + len(impulse_candles)
+
+        # ATR-Normalized Displacement
+        if direction == "BULL":
+            impulse_size = impulse_candles[-1].close - impulse_candles[0].open
+        else:
+            impulse_size = impulse_candles[0].open - impulse_candles[-1].close
+
+        if impulse_size < indicators.atr_14 * self.ATR_DISPLACEMENT:
+            return None
+
+        # FVG & BOS Validation
+        fvg = self._find_fvg(candles, ob_idx + 1, impulse_end_idx, direction)
+        if fvg is None: return None
+
+        if not self._has_bos(candles, ob_idx, impulse_end_idx, direction):
+            return None
+
+        ob_high, ob_low = ob_candle.high, ob_candle.low
+
+        # Mitigation Check
+        if self._ob_is_mitigated(candles, impulse_end_idx, ob_low, ob_high, direction):
+            return None
+
+        # Is Price in the OB Zone?
+        price_in_zone = (
+            (ob_low <= current.low <= ob_high)
+            or (ob_low <= current.close <= ob_high)
+            or (ob_low <= current.high <= ob_high and direction == "BEAR")
+        )
+        if not price_in_zone:
+            return None
+
+        # Mean Threshold Defense (The close MUST be in the "defended" half)
+        ob_mid = (ob_high + ob_low) / 2.0
+        if direction == "BULL" and current.close < ob_mid: return None
+        if direction == "BEAR" and current.close > ob_mid: return None
+
+        # Cooldown Check
+        if self._in_cooldown(candles, ob_low, ob_high, direction):
+            return None
+
+        # HTF Strict Alignment
+        if self.STRICT_HTF_ALIGNMENT and htf_bias:
+            if direction == "BULL" and htf_bias == "BEAR": return None
+            if direction == "BEAR" and htf_bias == "BULL": return None
+
+        # Rejection Wick & Momentum Validation
+        if direction == "BULL" and current.lower_wick < current.body_size * 0.8: return None
+        if direction == "BEAR" and current.upper_wick < current.body_size * 0.8: return None
+
+        candle_mid = (current.high + current.low) / 2
+        if direction == "BULL" and current.close <= candle_mid: return None
+        if direction == "BEAR" and current.close >= candle_mid: return None
+
+        # Risk Calculation & Max Risk Gate
+        trade_direction = "LONG" if direction == "BULL" else "SHORT"
+        
+        if direction == "BULL":
+            sl = round(ob_low - (0.5 * indicators.atr_14), 8)
+        else:
+            sl = round(ob_high + (0.5 * indicators.atr_14), 8)
+
+        entry = current.close
+        risk = abs(entry - sl)
+        
+        # Hard cap: Reject massive volatility zones that break risk rules
+        if risk > indicators.atr_14 * self.MAX_RISK_ATR:
+            return None
+            
+        risk = max(risk, indicators.atr_14 * 0.1)
+
+        # Target Selection & Min RR Gate
+        tp1, tp2 = self._compute_structural_tp(
+            candles, entry, sl, risk, direction, indicators.atr_14
+        )
+        
+        # Final Verification: Does the structural target offer a tradeable RR?
+        projected_rr = abs(tp1 - entry) / risk
+        if projected_rr < self.MIN_RR:
+            return None 
+
+        # Confidence Scoring
+        confidence = 0.72  # Boosted base due to strict gating
+
+        if direction == "BULL" and indicators.rsi_14 and indicators.rsi_14 < 55: confidence += 0.08
+        if direction == "BEAR" and indicators.rsi_14 and indicators.rsi_14 > 45: confidence += 0.08
+        if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20: confidence += 0.08
+        if len(impulse_candles) >= 3: confidence += 0.05
+
+        confidence = min(max(confidence, 0.0), 1.0)
+        if confidence < self.min_confidence:
+            return None
+
+        return SetupSignal(
+            strategy_name=self.name,
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=trade_direction,
+            confidence=round(confidence, 4),
+            entry=entry,
+            sl=sl,
+            tp1=tp1,
+            tp2=tp2,
+            notes=(
+                f"{'Bullish' if direction == 'BULL' else 'Bearish'} OB retest. "
+                f"OB zone: {ob_low:.2f}-{ob_high:.2f}. "
+                f"FVG: {fvg['bottom']:.2f}-{fvg['top']:.2f}. "
+                f"Proj. RR: {projected_rr:.2f}R. "
+                f"HTF bias: {htf_bias or 'N/A'}."
+            ),
+        )
+
+    # ── Structural TP Targeting ────────────────────────────────────
+    def _compute_structural_tp(
+        self,
+        candles: list[Candle],
+        entry: float,
+        sl: float,
+        risk: float,
+        direction: str,
+        atr: float,
+    ) -> tuple[float, float]:
+        window_start = max(0, len(candles) - self.TP_FRACTAL_LOOKBACK)
+        window = candles[window_start:]
+
+        if len(window) > self.PIVOT_BARS * 2 + 1:
+            fractal_highs, fractal_lows = find_fractal_points(
+                window[: -self.PIVOT_BARS], self.PIVOT_BARS
+            )
+        else:
+            fractal_highs, fractal_lows = [], []
+
+        if direction == "BULL" and fractal_highs:
+            above = sorted([lvl for _, lvl in fractal_highs if lvl > entry])
+            valid_targets = [lvl for lvl in above if (lvl - entry) / risk >= self.MIN_RR]
+            
+            if valid_targets:
+                tp1 = round(valid_targets[0], 8)
+                tp2 = round(valid_targets[-1], 8) if len(valid_targets) > 1 else round(entry + 3.0 * risk, 8)
+                return (tp1, tp2)
+
+        if direction == "BEAR" and fractal_lows:
+            below = sorted([lvl for _, lvl in fractal_lows if lvl < entry], reverse=True)
+            valid_targets = [lvl for lvl in below if (entry - lvl) / risk >= self.MIN_RR]
+            
+            if valid_targets:
+                tp1 = round(valid_targets[0], 8)
+                tp2 = round(valid_targets[-1], 8) if len(valid_targets) > 1 else round(entry - 3.0 * risk, 8)
+                return (tp1, tp2)
+
+        # Fallback: strict R-multiples if structural targets fail
+        if direction == "BULL":
+            return (round(entry + (self.MIN_RR * risk), 8), round(entry + (3.0 * risk), 8))
+        else:
+            return (round(entry - (self.MIN_RR * risk), 8), round(entry - (3.0 * risk), 8))
+
+    # ── SL/TP Fallbacks (getters for the engine) ──────────────────
+    def calculate_sl(self, signal, candles, atr):
+        if hasattr(signal, 'sl') and signal.sl is not None:
+            return signal.sl
+        if signal.direction == "LONG": return round(candles[-1].low - (1.0 * atr), 8)
+        else: return round(candles[-1].high + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr, sr_zones=None):
-        """Risk-based TP: 1.5R and 3.0R from structural stop."""
+        if hasattr(signal, 'tp1') and signal.tp1 is not None and hasattr(signal, 'tp2') and signal.tp2 is not None:
+            return (signal.tp1, signal.tp2)
+        
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)
-        risk = abs(entry - sl)
-        risk = max(risk, atr * 0.1)
-        if signal.direction == "LONG":
-            return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
-        else:
-            return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
+        risk = max(abs(entry - sl), atr * 0.1)
+        if signal.direction == "LONG": return (round(entry + 1.5 * risk, 8), round(entry + 3.0 * risk, 8))
+        else: return (round(entry - 1.5 * risk, 8), round(entry - 3.0 * risk, 8))
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         return True
