@@ -55,6 +55,7 @@ class LLMQueueManager:
     def _run_worker(self):
         MAX_RETRIES = 3
         RETRY_DELAYS = [15, 30, 60]  # Increasing backoff
+        PACING_DELAY = 20  # Hard pacing to stay under 6000 TPM limit (3 req/min)
 
         while not self._stop_event.is_set():
             try:
@@ -63,45 +64,55 @@ class LLMQueueManager:
                 if item is None:
                     continue  # Stop signal injected
 
-                # Items can be 6-tuple or 7-tuple (with retry count)
-                if len(item) == 6:
-                    watching_setup_id, signal, candles, indicators, sr_zones, htf_candles = item
-                    retry_count = 0
-                else:
-                    watching_setup_id, signal, candles, indicators, sr_zones, htf_candles, retry_count = item
+                # We no longer read retry_count from the queue tuple, all retries are inline
+                watching_setup_id, signal, candles, indicators, sr_zones, htf_candles = item[:6]
 
-                # Check LM Studio connectivity
-                if not LLMClient.ping_status():
-                    logger.warning("LM Studio is unreachable. Backing off 30s and requeuing.")
-                    time.sleep(30)
-                    self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, htf_candles, retry_count))
-                    continue
-                
-                logger.info(f"Processing LLM evaluation for {signal.symbol} - {signal.strategy_name} "
-                            f"(attempt {retry_count + 1}/{MAX_RETRIES + 1})")
-                verdict_data, prompt, raw_response = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones, htf_candles)
-                
-                # Log every interaction
-                self._log_prompt(watching_setup_id, signal, verdict_data, prompt, raw_response)
-                
-                if verdict_data:
-                    logger.info(f"[LLMQueue] Verdict={verdict_data.verdict} confidence={verdict_data.confidence_score}/10 "
-                                f"for {signal.symbol}/{signal.strategy_name}")
-                    self._handle_verdict(watching_setup_id, signal, verdict_data)
-                    # Pacing mechanism to prevent cloud inference 429 Too Many Requests
-                    time.sleep(3)
-                else:
-                    if retry_count < MAX_RETRIES:
-                        delay = RETRY_DELAYS[min(retry_count, len(RETRY_DELAYS) - 1)]
-                        # Groq and cloud APIs require aggressive cooldowns when 429 is hit
-                        logger.warning(f"LLM returned no valid verdict. Retry {retry_count + 1}/{MAX_RETRIES} "
-                                       f"after {delay}s delay.")
-                        time.sleep(delay)
-                        self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, htf_candles, retry_count + 1))
-                    else:
-                        logger.error(f"LLM failed after {MAX_RETRIES + 1} attempts for "
-                                     f"{signal.symbol}/{signal.strategy_name}. Dropping signal.")
+                success = False
+                for attempt in range(MAX_RETRIES + 1):
+                    if self._stop_event.is_set():
+                        break
+
+                    # Check Provider connectivity
+                    if not LLMClient.ping_status():
+                        logger.warning("LLM Provider is unreachable. Backing off 30s...")
+                        continue_backoff = 30
+                        for _ in range(continue_backoff):
+                            if self._stop_event.is_set(): break
+                            time.sleep(1)
+                        continue
                     
+                    logger.info(f"Processing LLM evaluation for {signal.symbol} - {signal.strategy_name} "
+                                f"(attempt {attempt + 1}/{MAX_RETRIES + 1})")
+                    verdict_data, prompt, raw_response = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones, htf_candles)
+                    
+                    # Log every interaction
+                    self._log_prompt(watching_setup_id, signal, verdict_data, prompt, raw_response)
+                    
+                    if verdict_data:
+                        logger.info(f"[LLMQueue] Verdict={verdict_data.verdict} confidence={verdict_data.confidence_score}/10 "
+                                    f"for {signal.symbol}/{signal.strategy_name}")
+                        self._handle_verdict(watching_setup_id, signal, verdict_data)
+                        success = True
+                        
+                        # Hard pacing to prevent TPM (Tokens Per Minute) and RPM limits on cloud providers
+                        logger.info(f"LLM request successful. Pacing queue for {PACING_DELAY}s to respect rate limits.")
+                        for _ in range(PACING_DELAY):
+                            if self._stop_event.is_set(): break
+                            time.sleep(1)
+                        break
+                    else:
+                        if attempt < MAX_RETRIES:
+                            delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+                            logger.warning(f"LLM returned no valid verdict. Retry {attempt + 1}/{MAX_RETRIES} "
+                                           f"after {delay}s delay.")
+                            # Sleep in 1s chunks to allow clean exiting
+                            for _ in range(delay):
+                                if self._stop_event.is_set(): break
+                                time.sleep(1)
+                        else:
+                            logger.error(f"LLM failed after {MAX_RETRIES + 1} attempts for "
+                                         f"{signal.symbol}/{signal.strategy_name}. Dropping signal.")
+                            
             except queue.Empty:
                 continue
             except Exception as e:
