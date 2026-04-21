@@ -1,12 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useSSE } from '../../hooks/useSSE';
-import type { SSEEventType } from '../../types/signals';
+import type { SSEEventType, LiveCandleEvent } from '../../types/signals';
 import ChartControls from './ChartControls';
-import CandleChart from './CandleChart';
+import CandleChart, { type CandleChartRef } from './CandleChart';
 import { useChartData } from './useChartData';
-import { Wifi, WifiOff } from 'lucide-react';
+import { Wifi, WifiOff, RotateCcw } from 'lucide-react';
 
 export default function Charts() {
+  const candleChartRef = useRef<CandleChartRef>(null);
+
   /* ─── control state ─── */
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [timeframe, setTimeframe] = useState('4h');
@@ -28,23 +30,31 @@ export default function Charts() {
     emaLines,
     loading,
     error,
+    applyLiveCandle,
     updateLastCandle,
+    liveTick,
+    closeTime,
   } = useChartData(symbol, timeframe, limit, showSRZones, minStrength, showEMA);
 
-  /* ─── SSE live price updates ─── */
+  /* ─── SSE live candle + price updates ─── */
   const handleSSEEvent = useCallback(
     (eventType: SSEEventType, data: Record<string, unknown>) => {
-      if (eventType === 'price_update') {
+      if (eventType === 'live_candle') {
+        const evt = data as unknown as LiveCandleEvent;
+        // Full OHLCV update — only when session streams this exact timeframe
+        if (evt.symbol === symbol && evt.timeframe === timeframe) {
+          applyLiveCandle(evt);
+        }
+      } else if (eventType === 'price_update') {
+        // Fallback: basic close-price mutation for matching symbol
         const evtSymbol = data.symbol as string;
         const price = data.price as number;
-        const timestamp = data.timestamp as string;
-
         if (evtSymbol === symbol && price) {
-          updateLastCandle(price, timestamp);
+          updateLastCandle(price);
         }
       }
     },
-    [symbol, updateLastCandle],
+    [symbol, timeframe, applyLiveCandle, updateLastCandle],
   );
 
   const { connected, reconnecting } = useSSE(handleSSEEvent);
@@ -66,24 +76,37 @@ export default function Charts() {
         </div>
 
         {/* Connection status */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           {candles.length > 0 && (
-            <span className="text-xs text-slate-500">
-              {candles.length.toLocaleString()} candles
-            </span>
+            <button
+              onClick={() => candleChartRef.current?.resetView()}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium text-slate-300 bg-slate-700/50 hover:bg-slate-600/50 hover:text-white transition-all border border-slate-600/50"
+              title="Reset Chart View to Current Candle"
+            >
+              <RotateCcw size={12} />
+              Reset View
+            </button>
           )}
-          <div
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium border transition-all ${
-              connected
-                ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
-                : reconnecting
-                  ? 'text-amber-400 border-amber-500/30 bg-amber-500/10 animate-pulse'
-                  : 'text-slate-500 border-slate-600/40 bg-slate-700/30'
-            }`}
-            id="sse-status"
-          >
-            {connected ? <Wifi size={10} /> : <WifiOff size={10} />}
-            {connected ? 'LIVE' : reconnecting ? 'RECONNECTING' : 'OFFLINE'}
+
+          <div className="flex items-center gap-2">
+            {candles.length > 0 && (
+              <span className="text-xs text-slate-500">
+                {candles.length.toLocaleString()} candles
+              </span>
+            )}
+            <div
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium border transition-all ${
+                connected
+                  ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+                  : reconnecting
+                    ? 'text-amber-400 border-amber-500/30 bg-amber-500/10 animate-pulse'
+                    : 'text-slate-500 border-slate-600/40 bg-slate-700/30'
+              }`}
+              id="sse-status"
+            >
+              {connected ? <Wifi size={10} /> : <WifiOff size={10} />}
+              {connected ? 'LIVE' : reconnecting ? 'RECONNECTING' : 'OFFLINE'}
+            </div>
           </div>
         </div>
       </div>
@@ -108,6 +131,7 @@ export default function Charts() {
 
       {/* Chart */}
       <CandleChart
+        ref={candleChartRef}
         candles={candles}
         srZones={srZones}
         showSRZones={showSRZones}
@@ -118,7 +142,10 @@ export default function Charts() {
         error={error}
         symbol={symbol}
         timeframe={timeframe}
+        liveTick={liveTick}
+        closeTime={closeTime}
       />
     </div>
   );
 }
+

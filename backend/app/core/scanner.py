@@ -89,6 +89,7 @@ class LiveScanner:
         self._sessions: dict[str, AnalysisSession] = {}
         self._lock = threading.Lock()
         self._app = app
+        self._live_candle_throttle: dict[str, float] = {}  # key → last_emit_ts
 
     def set_app(self, app):
         """Set the Flask app reference for app context in background threads."""
@@ -155,6 +156,7 @@ class LiveScanner:
                 timeframes=timeframes,
                 on_candle_close=lambda sym, tf, data: self._on_candle_close(session_id, sym, tf, data),
                 on_price_update=lambda sym, price, ts: self._on_price_update(session_id, sym, price, ts),
+                on_live_candle=lambda sym, tf, data: self._on_live_candle(session_id, sym, tf, data),
             )
 
             session = AnalysisSession(
@@ -430,6 +432,40 @@ class LiveScanner:
             "symbol": symbol,
             "price": price,
             "timestamp": timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
+        })
+
+    def _on_live_candle(self, session_id: str, symbol: str, timeframe: str, candle_data: dict):
+        """
+        Handle every kline tick (open and in-progress candles).
+        Throttled to max 1 emit per 500ms per symbol/timeframe pair.
+        Always emits immediately for is_closed=True (candle finalization).
+        """
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if not session or session.status != "active":
+                return
+
+        # Throttle: skip if we emitted less than 500ms ago (unless candle just closed)
+        throttle_key = f"{symbol}_{timeframe}"
+        now = time.time()
+        if not candle_data.get("is_closed", False):
+            last_emit = self._live_candle_throttle.get(throttle_key, 0)
+            if now - last_emit < 0.5:
+                return
+        self._live_candle_throttle[throttle_key] = now
+
+        sse_manager.publish("live_candle", {
+            "session_id": session_id,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "open_time": candle_data["open_time"],      # ms int
+            "close_time": candle_data["close_time"],    # ms int
+            "open": candle_data["open"],
+            "high": candle_data["high"],
+            "low": candle_data["low"],
+            "close": candle_data["close"],
+            "volume": candle_data["volume"],
+            "is_closed": candle_data["is_closed"],
         })
 
     def _backfill_historical_data(self, symbol: str, timeframes: list[str]):

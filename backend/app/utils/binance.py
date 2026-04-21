@@ -86,6 +86,7 @@ class BinanceStreamManager:
         timeframes: list[str],
         on_candle_close=None,
         on_price_update=None,
+        on_live_candle=None,
         max_retries: int = 20,
     ):
         """
@@ -94,12 +95,14 @@ class BinanceStreamManager:
             timeframes: List of timeframe strings (e.g. ["1h", "4h"])
             on_candle_close: Callback(symbol, timeframe, candle_data_dict) on closed candles
             on_price_update: Callback(symbol, price, timestamp) on every tick
+            on_live_candle: Callback(symbol, timeframe, live_candle_dict) on every kline tick
             max_retries: Max reconnection attempts before giving up
         """
         self.symbol = symbol.upper()
         self.timeframes = timeframes
         self.on_candle_close = on_candle_close
         self.on_price_update = on_price_update
+        self.on_live_candle = on_live_candle
         self.max_retries = max_retries
 
         self._ws: websocket.WebSocketApp | None = None
@@ -140,6 +143,25 @@ class BinanceStreamManager:
                     self.on_price_update(symbol, close_price, tick_time)
                 except Exception as e:
                     logger.error(f"[BinanceWS] Error in on_price_update: {e}")
+
+            # Fire live candle update on every kline tick (open or in-progress)
+            if self.on_live_candle:
+                live_candle = {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "open_time": kline.get("t", 0),       # ms
+                    "close_time": kline.get("T", 0),      # ms
+                    "open": float(kline.get("o", 0)),
+                    "high": float(kline.get("h", 0)),
+                    "low": float(kline.get("l", 0)),
+                    "close": float(kline.get("c", 0)),
+                    "volume": float(kline.get("v", 0)),
+                    "is_closed": is_closed,
+                }
+                try:
+                    self.on_live_candle(symbol, timeframe, live_candle)
+                except Exception as e:
+                    logger.error(f"[BinanceWS] Error in on_live_candle: {e}")
 
             # Only process closed candles for strategy scanning
             if is_closed and self.on_candle_close:

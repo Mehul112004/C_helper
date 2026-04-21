@@ -85,6 +85,20 @@ export interface CandleCloseEvent {
   timestamp: string;
 }
 
+export interface LiveCandleEvent {
+  session_id: string;
+  symbol: string;
+  timeframe: string;
+  open_time: number;   // ms
+  close_time: number;  // ms
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  is_closed: boolean;
+}
+
 export type SSEEventType =
   | 'setup_detected'
   | 'setup_expired'
@@ -93,6 +107,7 @@ export type SSEEventType =
   | 'session_stopped'
   | 'candle_close'
   | 'price_update'
+  | 'live_candle'
   | 'signal_confirmed';
 
 export interface SSEEvent {
