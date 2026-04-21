@@ -3,7 +3,7 @@ import time
 import threading
 import requests
 import websocket
-from datetime import datetime
+from datetime import datetime, timezone
 
 def fetch_klines(symbol: str, interval: str, start_time: int, end_time: int):
     """
@@ -41,7 +41,7 @@ def fetch_klines(symbol: str, interval: str, start_time: int, end_time: int):
             all_candles.append({
                 "symbol": symbol,
                 "timeframe": interval,
-                "open_time": datetime.fromtimestamp(row[0] / 1000.0),
+                "open_time": datetime.fromtimestamp(row[0] / 1000.0, tz=timezone.utc),
                 "open": float(row[1]),
                 "high": float(row[2]),
                 "low": float(row[3]),
@@ -132,7 +132,7 @@ class BinanceStreamManager:
 
             # Always fire price update for live ticker
             if self.on_price_update and close_price > 0:
-                tick_time = datetime.fromtimestamp(data.get("E", 0) / 1000.0)
+                tick_time = datetime.fromtimestamp(data.get("E", 0) / 1000.0, tz=timezone.utc)
                 try:
                     self.on_price_update(symbol, close_price, tick_time)
                 except Exception as e:
@@ -143,7 +143,7 @@ class BinanceStreamManager:
                 candle_data = {
                     "symbol": symbol,
                     "timeframe": timeframe,
-                    "open_time": datetime.fromtimestamp(kline.get("t", 0) / 1000.0),
+                    "open_time": datetime.fromtimestamp(kline.get("t", 0) / 1000.0, tz=timezone.utc),
                     "open": float(kline.get("o", 0)),
                     "high": float(kline.get("h", 0)),
                     "low": float(kline.get("l", 0)),

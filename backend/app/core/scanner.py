@@ -268,7 +268,7 @@ class LiveScanner:
 
                 # 2b. Trigger S/R zone refresh based on candle timeframe (FIX-SR-1)
                 from app.core.sr_engine import SREngine
-                if timeframe in ('4h', '1D'):
+                if timeframe in ('4h', '1d'):
                     SREngine.full_refresh(symbol, timeframe)
                 elif timeframe in ('1h', '15m'):
                     SREngine.minor_update(symbol, timeframe)

@@ -19,7 +19,7 @@ from app.core.config import SUPPORTED_SYMBOLS
 
 # Timeframes for each job type
 FULL_REFRESH_4H_TIMEFRAMES = ['4h']
-FULL_REFRESH_1D_TIMEFRAMES = ['1D']
+FULL_REFRESH_1D_TIMEFRAMES = ['1d']
 MINOR_UPDATE_TIMEFRAMES = ['1h', '15m']
 
 scheduler = BackgroundScheduler(daemon=True)

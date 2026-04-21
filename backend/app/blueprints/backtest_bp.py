@@ -21,7 +21,7 @@ from app.core.strategy_loader import registry
 
 backtest_bp = Blueprint('backtest', __name__)
 
-VALID_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1D']
+VALID_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
 
 
 @backtest_bp.route('/run', methods=['POST'])

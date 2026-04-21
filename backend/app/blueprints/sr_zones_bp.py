@@ -20,7 +20,7 @@ def get_sr_zones():
 
     Query params:
         symbol (required): Trading pair, e.g. 'BTCUSDT'
-        timeframe (optional): Filter by origin timeframe (e.g. '4h', '1D')
+        timeframe (optional): Filter by origin timeframe (e.g. '4h', '1d')
         min_strength (optional): Minimum strength score to include (0.0–1.0, default 0.0)
         near_price (optional): Only return zones within ±3% of this price
 
@@ -94,7 +94,7 @@ def refresh_zones():
     if not symbol:
         return jsonify({'error': 'Missing required field: symbol'}), 400
 
-    timeframes = ['4h', '1D']
+    timeframes = ['4h', '1d']
     target_timeframe = body.get('timeframe')
     if target_timeframe:
         timeframes = [target_timeframe]
