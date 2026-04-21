@@ -30,7 +30,7 @@ class BacktestEngine:
     strategy execution, trade simulation, and metrics calculation.
     """
 
-    VALID_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1D']
+    VALID_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
 
     # ---------- Indicator Computation (Vectorized, no DB fetch) ----------
 

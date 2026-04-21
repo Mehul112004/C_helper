@@ -36,10 +36,10 @@ def get_git_commit_id():
         print(f"Error getting git commit: {e}")
         return "unknown"
 
-# Binance API expects lowercase interval strings; our internal VALID_TIMEFRAMES
-# uses '1D' but Binance wants '1d'.
+# All internal timeframes use lowercase '1d'; Binance API also accepts '1d'.
+# Map is kept for explicit documentation and in case other intervals need remapping.
 BINANCE_INTERVAL_MAP = {
-    '1D': '1d',
+    '1d': '1d',
 }
 
 def _strip_tz(dt):
@@ -82,7 +82,7 @@ def sync_data_for_timeframe(symbol: str, timeframe: str, start_dt: datetime, end
             
     # Check expected count as a safeguard against interstitial gaps
     if not needs_fetch:
-        tf_mins = {'5m': 5, '15m': 15, '1h': 60, '4h': 240, '1D': 1440}
+        tf_mins = {'5m': 5, '15m': 15, '1h': 60, '4h': 240, '1d': 1440}
         mins = tf_mins.get(timeframe)
         if mins:
             expected_count = int((end_dt - start_dt).total_seconds() / 60 / mins)
@@ -190,15 +190,16 @@ def run_backtests():
                             print(f"  -> Error running backtest: {e}")
                             
         # Save to file
-        date_str = results["date"]
+        date_str = results["date"]                      # e.g. "2026-04-21"
+        date_compact = date_str.replace("-", "")        # e.g. "20260421" (folder name)
         project_root = os.path.dirname(backend_dir)
-        backtests_dir = os.path.join(project_root, "backtests", date_str)
+        backtests_dir = os.path.join(project_root, "backtests", date_compact)
         os.makedirs(backtests_dir, exist_ok=True)
         
         # Determine the correct version number
         version = 1
         while True:
-            filepath = os.path.join(backtests_dir, f"backtests_v{version}.json")
+            filepath = os.path.join(backtests_dir, f"{date_str}_backtests_v{version}.json")
             if not os.path.exists(filepath):
                 break
             version += 1
@@ -215,7 +216,7 @@ def run_backtests():
                 for run in results["runs"]
             ]
         }
-        brief_filepath = os.path.join(backtests_dir, f"backtests_v{version}_brief.json")
+        brief_filepath = os.path.join(backtests_dir, f"{date_str}_backtests_v{version}_brief.json")
         with open(brief_filepath, "w") as f:
             json.dump(brief_results, f, indent=2, default=str)
             

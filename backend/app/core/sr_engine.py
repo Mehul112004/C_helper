@@ -92,7 +92,7 @@ class SREngine:
                     'price_level': float(highs[i]),
                     'zone_type': 'resistance',
                     'detection_method': 'swing',
-                    'timestamp': pd.Timestamp(times[i]).to_pydatetime(),
+                    'timestamp': pd.Timestamp(times[i]).to_pydatetime().replace(tzinfo=None),
                     '_formation_idx': i,  # consumed by score_zone, not persisted (FIX-SR-4)
                 })
 
@@ -104,7 +104,7 @@ class SREngine:
                     'price_level': float(lows[i]),
                     'zone_type': 'support',
                     'detection_method': 'swing',
-                    'timestamp': pd.Timestamp(times[i]).to_pydatetime(),
+                    'timestamp': pd.Timestamp(times[i]).to_pydatetime().replace(tzinfo=None),
                     '_formation_idx': i,  # consumed by score_zone, not persisted (FIX-SR-4)
                 })
 
@@ -155,7 +155,7 @@ class SREngine:
                         'price_level': round(float(level), 10),
                         'zone_type': zone_type,
                         'detection_method': 'round_number',
-                        'timestamp': datetime.utcnow(),
+                        'timestamp': datetime.utcnow().replace(tzinfo=None),
                     })
                 n += 1
 
@@ -196,17 +196,20 @@ class SREngine:
         if len(candles_1d) >= 2:
             # Previous day high/low (second most recent 1D candle)
             prev_day = candles_1d[1]
+            prev_day_ts = prev_day.open_time
+            if hasattr(prev_day_ts, 'tzinfo') and prev_day_ts.tzinfo is not None:
+                prev_day_ts = prev_day_ts.replace(tzinfo=None)
             zones.append({
                 'price_level': float(prev_day.high),
                 'zone_type': 'resistance',
                 'detection_method': 'prev_day_hl',
-                'timestamp': prev_day.open_time,
+                'timestamp': prev_day_ts,
             })
             zones.append({
                 'price_level': float(prev_day.low),
                 'zone_type': 'support',
                 'detection_method': 'prev_day_hl',
-                'timestamp': prev_day.open_time,
+                'timestamp': prev_day_ts,
             })
 
         # Determine the previous ISO week (Monday–Sunday) (FIX-SR-2)
@@ -233,17 +236,23 @@ class SREngine:
             if prev_week_candles:
                 week_high = max(c.high for c in prev_week_candles)
                 week_low = min(c.low for c in prev_week_candles)
+                week_first_ts = prev_week_candles[0].open_time
+                week_last_ts = prev_week_candles[-1].open_time
+                if hasattr(week_first_ts, 'tzinfo') and week_first_ts.tzinfo is not None:
+                    week_first_ts = week_first_ts.replace(tzinfo=None)
+                if hasattr(week_last_ts, 'tzinfo') and week_last_ts.tzinfo is not None:
+                    week_last_ts = week_last_ts.replace(tzinfo=None)
                 zones.append({
                     'price_level': float(week_high),
                     'zone_type': 'resistance',
                     'detection_method': 'prev_week_hl',
-                    'timestamp': prev_week_candles[0].open_time,
+                    'timestamp': week_first_ts,
                 })
                 zones.append({
                     'price_level': float(week_low),
                     'zone_type': 'support',
                     'detection_method': 'prev_week_hl',
-                    'timestamp': prev_week_candles[-1].open_time,
+                    'timestamp': week_last_ts,
                 })
 
         return zones
@@ -355,6 +364,8 @@ class SREngine:
             last_tested = df.loc[touch_mask, 'open_time'].iloc[-1]
             if isinstance(last_tested, pd.Timestamp):
                 last_tested = last_tested.to_pydatetime()
+            if hasattr(last_tested, 'tzinfo') and last_tested.tzinfo is not None:
+                last_tested = last_tested.replace(tzinfo=None)
 
         zone['strength_score'] = round(strength, 4)
         zone['touch_count'] = touch_count

@@ -13,7 +13,7 @@ from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 class MACDMomentumStrategy(BaseStrategy):
     name = "MACD Momentum"
     description = "MACD/signal cross with histogram confirmation"
-    timeframes = ["15m", "1h", "4h", "1D"]
+    timeframes = ["15m", "1h", "4h", "1d"]
     version = "1.1"
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
