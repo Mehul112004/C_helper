@@ -1,9 +1,12 @@
 import json
+import logging
 import time
 import threading
 import requests
 import websocket
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 def fetch_klines(symbol: str, interval: str, start_time: int, end_time: int):
     """
@@ -136,7 +139,7 @@ class BinanceStreamManager:
                 try:
                     self.on_price_update(symbol, close_price, tick_time)
                 except Exception as e:
-                    print(f"[BinanceWS] Error in on_price_update: {e}")
+                    logger.error(f"[BinanceWS] Error in on_price_update: {e}")
 
             # Only process closed candles for strategy scanning
             if is_closed and self.on_candle_close:
@@ -153,40 +156,40 @@ class BinanceStreamManager:
                 try:
                     self.on_candle_close(symbol, timeframe, candle_data)
                 except Exception as e:
-                    print(f"[BinanceWS] Error in on_candle_close: {e}")
+                    logger.error(f"[BinanceWS] Error in on_candle_close: {e}")
 
         except json.JSONDecodeError:
-            print(f"[BinanceWS] Failed to parse message: {message[:100]}")
+            logger.warning(f"[BinanceWS] Failed to parse message: {message[:100]}")
         except Exception as e:
-            print(f"[BinanceWS] Unexpected error in message handler: {e}")
+            logger.error(f"[BinanceWS] Unexpected error in message handler: {e}")
 
     def _on_error(self, ws, error):
         """Handle WebSocket errors."""
-        print(f"[BinanceWS] Error for {self.symbol}: {error}")
+        logger.error(f"[BinanceWS] Error for {self.symbol}: {error}")
 
     def _on_close(self, ws, close_status_code, close_msg):
         """Handle WebSocket close — attempt reconnection if still running."""
-        print(f"[BinanceWS] Connection closed for {self.symbol} "
-              f"(status={close_status_code}, msg={close_msg})")
+        logger.info(f"[BinanceWS] Connection closed for {self.symbol} "
+                    f"(status={close_status_code}, msg={close_msg})")
 
         if self._running and self._retry_count < self.max_retries:
             self._retry_count += 1
             # Exponential backoff: 1s, 2s, 4s, 8s, ... max 60s
             delay = min(2 ** (self._retry_count - 1), 60)
-            print(f"[BinanceWS] Reconnecting in {delay}s "
-                  f"(attempt {self._retry_count}/{self.max_retries})...")
+            logger.warning(f"[BinanceWS] Reconnecting in {delay}s "
+                          f"(attempt {self._retry_count}/{self.max_retries})...")
             time.sleep(delay)
             if self._running:
                 self._connect()
         elif self._retry_count >= self.max_retries:
-            print(f"[BinanceWS] Max retries ({self.max_retries}) exceeded for {self.symbol}. Giving up.")
+            logger.error(f"[BinanceWS] Max retries ({self.max_retries}) exceeded for {self.symbol}. Giving up.")
             self._running = False
 
     def _on_open(self, ws):
         """Handle successful WebSocket connection."""
         self._retry_count = 0  # Reset on successful connect
-        print(f"[BinanceWS] Connected for {self.symbol} — "
-              f"streaming {', '.join(self.timeframes)}")
+        logger.info(f"[BinanceWS] Connected for {self.symbol} — "
+                    f"streaming {', '.join(self.timeframes)}")
 
     def _connect(self):
         """Create and run a new WebSocket connection."""
@@ -205,7 +208,7 @@ class BinanceStreamManager:
         """Start the WebSocket stream in a background daemon thread."""
         with self._lock:
             if self._running:
-                print(f"[BinanceWS] Already running for {self.symbol}")
+                logger.info(f"[BinanceWS] Already running for {self.symbol}")
                 return
 
             self._running = True
@@ -216,7 +219,7 @@ class BinanceStreamManager:
                 daemon=True,
             )
             self._thread.start()
-            print(f"[BinanceWS] Started stream thread for {self.symbol}")
+            logger.info(f"[BinanceWS] Started stream thread for {self.symbol}")
 
     def stop(self):
         """Stop the WebSocket stream and clean up."""
@@ -231,7 +234,7 @@ class BinanceStreamManager:
                 except Exception:
                     pass
                 self._ws = None
-            print(f"[BinanceWS] Stopped stream for {self.symbol}")
+            logger.info(f"[BinanceWS] Stopped stream for {self.symbol}")
 
     @property
     def is_running(self) -> bool:

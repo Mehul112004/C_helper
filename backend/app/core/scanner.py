@@ -37,6 +37,9 @@ TIMEFRAME_MINUTES = {
     '12h': 720, '1d': 1440, '3d': 4320, '1w': 10080,
 }
 
+# Timeframe → duration in milliseconds (for gap detection arithmetic)
+TIMEFRAME_MS = {k: v * 60 * 1000 for k, v in TIMEFRAME_MINUTES.items()}
+
 # Minimum candles needed for indicator warm-up (EMA 200 + buffer)
 MIN_BACKFILL_CANDLES = CANDLE_WARMUP
 
@@ -263,7 +266,15 @@ class LiveScanner:
                 # 1. Upsert the closed candle into DB
                 self._upsert_candle(candle_data)
 
+                # 1b. Gap detection & auto-heal
+                #     Must run AFTER upsert (incoming candle is valid data)
+                #     but BEFORE indicators (they need contiguous data)
+                gap_healed = self._detect_and_heal_gap(
+                    symbol, timeframe, candle_data['open_time']
+                )
+
                 # 2. Invalidate indicator cache
+                #    Always invalidate — covers both normal and healed paths
                 IndicatorService.invalidate_cache(symbol, timeframe)
 
                 # 2b. Trigger S/R zone refresh based on candle timeframe (FIX-SR-1)
@@ -555,6 +566,112 @@ class LiveScanner:
             except Exception as e:
                 db.session.rollback()
                 print(f"[LiveScanner] Candle upsert fallback error: {e}")
+
+    def _detect_and_heal_gap(
+        self, symbol: str, timeframe: str, incoming_open_time: datetime
+    ) -> bool:
+        """
+        Compare incoming candle's open_time against the last stored candle
+        for this symbol/timeframe. If a temporal gap is detected, backfill
+        the missing candles via the Binance REST API.
+
+        This is the core defence against dropped candles during WS reconnects
+        and REST-to-WS transitions. Without this, recursive indicators (EMA,
+        MACD, RSI) compute over discontinuous data and produce invalid values.
+
+        Returns:
+            True if a gap was detected and healed (caller should recalculate).
+            False if no gap — normal flow continues.
+        """
+        from app.models.db import db, Candle as CandleModel
+
+        tf_ms = TIMEFRAME_MS.get(timeframe)
+        if tf_ms is None:
+            logger.warning(
+                f"[GapDetect] Unknown timeframe '{timeframe}' — "
+                f"skipping gap detection for {symbol}"
+            )
+            return False
+
+        # Query the most recent candle BEFORE the incoming one
+        last_candle = (
+            CandleModel.query
+            .filter(
+                CandleModel.symbol == symbol,
+                CandleModel.timeframe == timeframe,
+                CandleModel.open_time < incoming_open_time,
+            )
+            .order_by(CandleModel.open_time.desc())
+            .first()
+        )
+
+        if last_candle is None:
+            # No previous candle — cold start, nothing to compare against
+            return False
+
+        # Calculate expected next candle open_time
+        expected_next_open = last_candle.open_time + timedelta(
+            milliseconds=tf_ms
+        )
+
+        # Allow 500ms tolerance for timestamp jitter
+        tolerance = timedelta(milliseconds=500)
+        if incoming_open_time <= expected_next_open + tolerance:
+            # No gap — contiguous data
+            return False
+
+        # ── Gap detected ──
+        gap_delta = incoming_open_time - expected_next_open
+        missing_candles_est = int(gap_delta.total_seconds() * 1000 / tf_ms)
+
+        logger.warning(
+            f"[GapDetect] ⚠ GAP DETECTED: {symbol}/{timeframe} — "
+            f"last_stored={last_candle.open_time.isoformat()} "
+            f"incoming={incoming_open_time.isoformat()} "
+            f"expected_next={expected_next_open.isoformat()} "
+            f"gap_delta={gap_delta} "
+            f"missing_candles≈{missing_candles_est}"
+        )
+
+        # Convert to ms timestamps for REST API
+        expected_open_ms = int(expected_next_open.timestamp() * 1000)
+        # Fetch up to (but not including) the incoming candle — it's already upserted
+        incoming_open_ms = int(incoming_open_time.timestamp() * 1000) - 1
+
+        try:
+            backfill_candles = fetch_klines(
+                symbol, timeframe, expected_open_ms, incoming_open_ms
+            )
+
+            if not backfill_candles:
+                logger.error(
+                    f"[GapHeal] REST API returned 0 candles for gap backfill "
+                    f"{symbol}/{timeframe} "
+                    f"[{expected_next_open.isoformat()} → {incoming_open_time.isoformat()}]"
+                )
+                return False
+
+            # Insert backfilled candles sequentially
+            healed_count = 0
+            for candle_data in backfill_candles:
+                self._upsert_candle(candle_data, commit=False)
+                healed_count += 1
+
+            db.session.commit()
+
+            logger.info(
+                f"[GapHeal] ✅ Gap healed: {symbol}/{timeframe} — "
+                f"backfilled {healed_count} candles "
+                f"[{expected_next_open.isoformat()} → {incoming_open_time.isoformat()}]"
+            )
+            return True
+
+        except Exception as e:
+            db.session.rollback()
+            logger.error(
+                f"[GapHeal] Backfill FAILED for {symbol}/{timeframe}: {e}"
+            )
+            return False
 
     def _persist_session(self, session: AnalysisSession):
         """Save session record to DB."""

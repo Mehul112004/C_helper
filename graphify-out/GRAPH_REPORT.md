@@ -1,108 +1,140 @@
-# Graph Report - .  (2026-04-19)
+# Graph Report - /Users/artemis/Mehul/C_helper  (2026-04-22)
 
 ## Corpus Check
-- 124 files · ~76,855 words
+- 99 files · ~214,758 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1285 nodes · 3946 edges · 69 communities detected
-- Extraction: 36% EXTRACTED · 64% INFERRED · 0% AMBIGUOUS · INFERRED: 2523 edges (avg confidence: 0.56)
+- 1460 nodes · 4988 edges · 101 communities detected
+- Extraction: 30% EXTRACTED · 70% INFERRED · 0% AMBIGUOUS · INFERRED: 3490 edges (avg confidence: 0.54)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
-- [[_COMMUNITY_Strategy Implementations|Strategy Implementations]]
-- [[_COMMUNITY_SR Engine & Scheduling|S/R Engine & Scheduling]]
-- [[_COMMUNITY_BaseStrategy Contract|BaseStrategy Contract]]
-- [[_COMMUNITY_Signals & Notifications|Signals & Notifications]]
-- [[_COMMUNITY_Indicators & Backtesting|Indicators & Backtesting]]
-- [[_COMMUNITY_Strategy Registry & Loader|Strategy Registry & Loader]]
-- [[_COMMUNITY_Data Ingestion & Binance|Data Ingestion & Binance]]
-- [[_COMMUNITY_SSE PubSub System|SSE Pub/Sub System]]
-- [[_COMMUNITY_Docs & Fix Plans|Docs & Fix Plans]]
-- [[_COMMUNITY_LLM Client & Providers|LLM Client & Providers]]
-- [[_COMMUNITY_Frontend API Client|Frontend API Client]]
-- [[_COMMUNITY_SMC & Fibonacci Strategies|SMC & Fibonacci Strategies]]
-- [[_COMMUNITY_UI Config Panels|UI Config Panels]]
-- [[_COMMUNITY_Trade Log Component|Trade Log Component]]
-- [[_COMMUNITY_App Router & Layout|App Router & Layout]]
-- [[_COMMUNITY_Signal Pipeline Concepts|Signal Pipeline Concepts]]
-- [[_COMMUNITY_Data Import Endpoints|Data Import Endpoints]]
-- [[_COMMUNITY_Watching Card UI|Watching Card UI]]
-- [[_COMMUNITY_SLTP Calculation|SL/TP Calculation]]
-- [[_COMMUNITY_Rejected Card UI|Rejected Card UI]]
-- [[_COMMUNITY_Confirmed Card UI|Confirmed Card UI]]
-- [[_COMMUNITY_LLM Queue & Signals|LLM Queue & Signals]]
-- [[_COMMUNITY_LLM Provider Architecture|LLM Provider Architecture]]
-- [[_COMMUNITY_Mini Chart Component|Mini Chart Component]]
-- [[_COMMUNITY_Analysis Sessions Hook|Analysis Sessions Hook]]
-- [[_COMMUNITY_SSE React Hook|SSE React Hook]]
-- [[_COMMUNITY_Metrics Summary UI|Metrics Summary UI]]
-- [[_COMMUNITY_Equity Curve Chart|Equity Curve Chart]]
-- [[_COMMUNITY_Trade Chart Viz|Trade Chart Viz]]
-- [[_COMMUNITY_Watching Tab UI|Watching Tab UI]]
-- [[_COMMUNITY_Historical Data Page|Historical Data Page]]
-- [[_COMMUNITY_Telegram Testing|Telegram Testing]]
-- [[_COMMUNITY_DB Migration Script|DB Migration Script]]
-- [[_COMMUNITY_App Configuration|App Configuration]]
-- [[_COMMUNITY_Bug Fix Knowledge Base|Bug Fix Knowledge Base]]
-- [[_COMMUNITY_Database Architecture|Database Architecture]]
-- [[_COMMUNITY_ESLint Config|ESLint Config]]
-- [[_COMMUNITY_Vite Build Config|Vite Build Config]]
-- [[_COMMUNITY_Backtest Types|Backtest Types]]
-- [[_COMMUNITY_Signal Types|Signal Types]]
-- [[_COMMUNITY_Signal Feed Page|Signal Feed Page]]
-- [[_COMMUNITY_Rejected Tab|Rejected Tab]]
-- [[_COMMUNITY_Confirmed Tab|Confirmed Tab]]
-- [[_COMMUNITY_Flask Entry Point|Flask Entry Point]]
-- [[_COMMUNITY_Candle From Dict|Candle From Dict]]
-- [[_COMMUNITY_Candle From DataFrame|Candle From DataFrame]]
-- [[_COMMUNITY_Candle Body Size|Candle Body Size]]
-- [[_COMMUNITY_Candle Range Size|Candle Range Size]]
-- [[_COMMUNITY_Upper Wick Property|Upper Wick Property]]
-- [[_COMMUNITY_Lower Wick Property|Lower Wick Property]]
-- [[_COMMUNITY_Bullish Check|Bullish Check]]
-- [[_COMMUNITY_Bearish Check|Bearish Check]]
-- [[_COMMUNITY_Indicators Snapshot|Indicators Snapshot]]
-- [[_COMMUNITY_Strategy Scan Method|Strategy Scan Method]]
-- [[_COMMUNITY_Backend Init|Backend Init]]
-- [[_COMMUNITY_LLM Evaluate Prompt|LLM Evaluate Prompt]]
-- [[_COMMUNITY_LLM Ping Status|LLM Ping Status]]
-- [[_COMMUNITY_Providers Init|Providers Init]]
-- [[_COMMUNITY_Stream Active Check|Stream Active Check]]
-- [[_COMMUNITY_Platform Overview|Platform Overview]]
-- [[_COMMUNITY_Tech Stack|Tech Stack]]
-- [[_COMMUNITY_Symbols & Timeframes|Symbols & Timeframes]]
-- [[_COMMUNITY_Design Rationale|Design Rationale]]
-- [[_COMMUNITY_Default SLTP|Default SL/TP]]
-- [[_COMMUNITY_Frontend Entry|Frontend Entry]]
-- [[_COMMUNITY_Vite Logo|Vite Logo]]
-- [[_COMMUNITY_React Logo|React Logo]]
-- [[_COMMUNITY_UI Icons|UI Icons]]
-- [[_COMMUNITY_Favicon|Favicon]]
+- [[_COMMUNITY_Community 0|Community 0]]
+- [[_COMMUNITY_Community 1|Community 1]]
+- [[_COMMUNITY_Community 2|Community 2]]
+- [[_COMMUNITY_Community 3|Community 3]]
+- [[_COMMUNITY_Community 4|Community 4]]
+- [[_COMMUNITY_Community 5|Community 5]]
+- [[_COMMUNITY_Community 6|Community 6]]
+- [[_COMMUNITY_Community 7|Community 7]]
+- [[_COMMUNITY_Community 8|Community 8]]
+- [[_COMMUNITY_Community 9|Community 9]]
+- [[_COMMUNITY_Community 10|Community 10]]
+- [[_COMMUNITY_Community 11|Community 11]]
+- [[_COMMUNITY_Community 12|Community 12]]
+- [[_COMMUNITY_Community 13|Community 13]]
+- [[_COMMUNITY_Community 14|Community 14]]
+- [[_COMMUNITY_Community 15|Community 15]]
+- [[_COMMUNITY_Community 16|Community 16]]
+- [[_COMMUNITY_Community 17|Community 17]]
+- [[_COMMUNITY_Community 18|Community 18]]
+- [[_COMMUNITY_Community 19|Community 19]]
+- [[_COMMUNITY_Community 20|Community 20]]
+- [[_COMMUNITY_Community 21|Community 21]]
+- [[_COMMUNITY_Community 22|Community 22]]
+- [[_COMMUNITY_Community 23|Community 23]]
+- [[_COMMUNITY_Community 24|Community 24]]
+- [[_COMMUNITY_Community 25|Community 25]]
+- [[_COMMUNITY_Community 26|Community 26]]
+- [[_COMMUNITY_Community 27|Community 27]]
+- [[_COMMUNITY_Community 28|Community 28]]
+- [[_COMMUNITY_Community 29|Community 29]]
+- [[_COMMUNITY_Community 30|Community 30]]
+- [[_COMMUNITY_Community 31|Community 31]]
+- [[_COMMUNITY_Community 32|Community 32]]
+- [[_COMMUNITY_Community 33|Community 33]]
+- [[_COMMUNITY_Community 34|Community 34]]
+- [[_COMMUNITY_Community 35|Community 35]]
+- [[_COMMUNITY_Community 36|Community 36]]
+- [[_COMMUNITY_Community 37|Community 37]]
+- [[_COMMUNITY_Community 38|Community 38]]
+- [[_COMMUNITY_Community 39|Community 39]]
+- [[_COMMUNITY_Community 40|Community 40]]
+- [[_COMMUNITY_Community 41|Community 41]]
+- [[_COMMUNITY_Community 42|Community 42]]
+- [[_COMMUNITY_Community 43|Community 43]]
+- [[_COMMUNITY_Community 44|Community 44]]
+- [[_COMMUNITY_Community 45|Community 45]]
+- [[_COMMUNITY_Community 46|Community 46]]
+- [[_COMMUNITY_Community 47|Community 47]]
+- [[_COMMUNITY_Community 48|Community 48]]
+- [[_COMMUNITY_Community 49|Community 49]]
+- [[_COMMUNITY_Community 50|Community 50]]
+- [[_COMMUNITY_Community 51|Community 51]]
+- [[_COMMUNITY_Community 52|Community 52]]
+- [[_COMMUNITY_Community 53|Community 53]]
+- [[_COMMUNITY_Community 54|Community 54]]
+- [[_COMMUNITY_Community 55|Community 55]]
+- [[_COMMUNITY_Community 56|Community 56]]
+- [[_COMMUNITY_Community 57|Community 57]]
+- [[_COMMUNITY_Community 58|Community 58]]
+- [[_COMMUNITY_Community 59|Community 59]]
+- [[_COMMUNITY_Community 60|Community 60]]
+- [[_COMMUNITY_Community 61|Community 61]]
+- [[_COMMUNITY_Community 62|Community 62]]
+- [[_COMMUNITY_Community 63|Community 63]]
+- [[_COMMUNITY_Community 64|Community 64]]
+- [[_COMMUNITY_Community 65|Community 65]]
+- [[_COMMUNITY_Community 66|Community 66]]
+- [[_COMMUNITY_Community 67|Community 67]]
+- [[_COMMUNITY_Community 68|Community 68]]
+- [[_COMMUNITY_Community 69|Community 69]]
+- [[_COMMUNITY_Community 70|Community 70]]
+- [[_COMMUNITY_Community 71|Community 71]]
+- [[_COMMUNITY_Community 72|Community 72]]
+- [[_COMMUNITY_Community 73|Community 73]]
+- [[_COMMUNITY_Community 74|Community 74]]
+- [[_COMMUNITY_Community 75|Community 75]]
+- [[_COMMUNITY_Community 76|Community 76]]
+- [[_COMMUNITY_Community 77|Community 77]]
+- [[_COMMUNITY_Community 78|Community 78]]
+- [[_COMMUNITY_Community 79|Community 79]]
+- [[_COMMUNITY_Community 80|Community 80]]
+- [[_COMMUNITY_Community 81|Community 81]]
+- [[_COMMUNITY_Community 82|Community 82]]
+- [[_COMMUNITY_Community 83|Community 83]]
+- [[_COMMUNITY_Community 84|Community 84]]
+- [[_COMMUNITY_Community 85|Community 85]]
+- [[_COMMUNITY_Community 86|Community 86]]
+- [[_COMMUNITY_Community 87|Community 87]]
+- [[_COMMUNITY_Community 88|Community 88]]
+- [[_COMMUNITY_Community 89|Community 89]]
+- [[_COMMUNITY_Community 90|Community 90]]
+- [[_COMMUNITY_Community 91|Community 91]]
+- [[_COMMUNITY_Community 92|Community 92]]
+- [[_COMMUNITY_Community 93|Community 93]]
+- [[_COMMUNITY_Community 94|Community 94]]
+- [[_COMMUNITY_Community 95|Community 95]]
+- [[_COMMUNITY_Community 96|Community 96]]
+- [[_COMMUNITY_Community 97|Community 97]]
+- [[_COMMUNITY_Community 98|Community 98]]
+- [[_COMMUNITY_Community 99|Community 99]]
+- [[_COMMUNITY_Community 100|Community 100]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `SetupSignal` - 275 edges
-2. `Candle` - 245 edges
-3. `Indicators` - 233 edges
-4. `BaseStrategy` - 185 edges
-5. `IndicatorService` - 92 edges
-6. `TrendPullbackConfluenceStrategy` - 84 edges
-7. `FibonacciRetracementStrategy` - 84 edges
-8. `SRRejectionStrategy` - 79 edges
-9. `BollingerSqueezeStrategy` - 79 edges
-10. `SRBreakoutStrategy` - 79 edges
+1. `SetupSignal` - 364 edges
+2. `Candle` - 345 edges
+3. `Indicators` - 318 edges
+4. `BaseStrategy` - 214 edges
+5. `FibonacciRetracementStrategy` - 149 edges
+6. `BollingerSqueezeStrategy` - 146 edges
+7. `TrendPullbackConfluenceStrategy` - 144 edges
+8. `SRRejectionStrategy` - 139 edges
+9. `SRBreakoutStrategy` - 139 edges
+10. `RSIReversalStrategy` - 138 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `Get S/R Zones Endpoint` --conceptually_related_to--> `detect_zones()`  [INFERRED]
-  docs/logic/api_endpoints.md → backend/app/core/sr_engine.py
-- `Volume Profile Detection (Deferred)` --conceptually_related_to--> `detect_zones()`  [INFERRED]
-  docs/backlog.md → backend/app/core/sr_engine.py
-- `BacktestEngine (Vectorized)` --calls--> `compute_all()`  [INFERRED]
-  docs/walkthroughs/walkthrough-phase-7.md → backend/app/core/indicators.py
-- `detect_zones()` --calls--> `Swing Point Detection`  [EXTRACTED]
-  backend/app/core/sr_engine.py → docs/logic/sr_engine.md
-- `detect_zones()` --calls--> `Round Number Detection`  [EXTRACTED]
-  backend/app/core/sr_engine.py → docs/logic/sr_engine.md
+- `detect_zones()` --conceptually_related_to--> `Get S/R Zones Endpoint`  [INFERRED]
+  /Users/artemis/Mehul/C_helper/backend/app/core/sr_engine.py → docs/logic/api_endpoints.md
+- `detect_zones()` --conceptually_related_to--> `Volume Profile Detection (Deferred)`  [INFERRED]
+  /Users/artemis/Mehul/C_helper/backend/app/core/sr_engine.py → docs/backlog.md
+- `compute_all()` --calls--> `BacktestEngine (Vectorized)`  [INFERRED]
+  /Users/artemis/Mehul/C_helper/backend/app/core/indicators.py → docs/walkthroughs/walkthrough-phase-7.md
+- `Indicators API Blueprint Endpoint: GET /api/indicators?symbol=BTCUSDT&timeframe=` --uses--> `IndicatorService`  [INFERRED]
+  backend/app/blueprints/indicators_bp.py → /Users/artemis/Mehul/C_helper/backend/app/core/indicators.py
+- `Get technical indicators for a given symbol and timeframe.      Query params:` --uses--> `IndicatorService`  [INFERRED]
+  backend/app/blueprints/indicators_bp.py → /Users/artemis/Mehul/C_helper/backend/app/core/indicators.py
 
 ## Hyperedges (group relationships)
 - **End-to-End Signal Pipeline** — live_analysis_candle_close_flow, strategy_engine_runner, llm_queue_manager, confirmed_signal_model, readme_telegram_integration [EXTRACTED 0.90]
@@ -111,392 +143,582 @@
 
 ## Communities
 
-### Community 0 - "Strategy Implementations"
+### Community 0 - "Community 0"
 Cohesion: 0.02
-Nodes (157): BaseStrategy, Candle, from_df_row(), from_series(), Indicators, Immutable representation of a single OHLCV candle bar., Universal output of every strategy's scan() method.     This object flows throug, Serialize to a JSON-safe dictionary. (+149 more)
+Nodes (188): BaseStrategy, Candle, from_series(), Indicators, Immutable representation of a single OHLCV candle bar., Universal output of every strategy's scan() method.     This object flows throug, Serialize to a JSON-safe dictionary., Abstract base class for all trading strategies.      All strategies must impleme (+180 more)
 
-### Community 1 - "S/R Engine & Scheduling"
-Cohesion: 0.02
-Nodes (165): Get S/R Zones Endpoint, Volume Profile Detection (Deferred), backtest_history(), export_backtest_csv(), get_backtest_run(), Backtest API Blueprint Endpoints for running backtests, fetching history, and ex, List past backtest runs, most recent first., Fetch full results for a specific backtest run, including all trades. (+157 more)
-
-### Community 2 - "BaseStrategy Contract"
-Cohesion: 0.08
-Nodes (81): BaseStrategy, BollingerSqueezeStrategy, EMACrossoverStrategy, FibonacciRetracementStrategy, MACDMomentumStrategy, RSIReversalStrategy, SRBreakoutStrategy, SRRejectionStrategy (+73 more)
-
-### Community 3 - "Signals & Notifications"
-Cohesion: 0.03
-Nodes (81): ping_status(), ConfirmedSignal, LLMPromptLog, Tracks detected trade setups that are being monitored (watching cards).     Crea, Final trade signals that have passed the LLM confirmation pipeline.     Displaye, Trade signals that were rejected by the LLM confirmation pipeline., Logs every interaction with the LLM.      Loose coupling referencing 'watching_s, RejectedSignal (+73 more)
-
-### Community 4 - "Indicators & Backtesting"
-Cohesion: 0.03
-Nodes (63): Get Indicators Endpoint, build_equity_curve(), compute_indicators_from_df(), compute_metrics(), run(), simulate_trades(), get_indicators(), invalidate_cache() (+55 more)
-
-### Community 5 - "Strategy Registry & Loader"
+### Community 1 - "Community 1"
 Cohesion: 0.04
-Nodes (49): run_backtest(), Strategy, create_app(), get_git_commit_id(), run_backtests(), _strip_tz(), sync_data_for_timeframe(), init_scheduler() (+41 more)
+Nodes (138): backtest_history(), export_backtest_csv(), get_backtest_run(), Backtest API Blueprint Endpoints for running backtests, fetching history, and ex, List past backtest runs, most recent first., Fetch full results for a specific backtest run, including all trades., Export the trade log for a backtest run as a downloadable CSV file., Launch a new backtest.      Request Body:     {         "symbol": "BTCUSDT", (+130 more)
 
-### Community 6 - "Data Ingestion & Binance"
-Cohesion: 0.06
-Nodes (30): BinanceStreamManager, fetch_klines(), Build the combined stream URL for all symbol/timeframe pairs., Handle incoming WebSocket messages., Handle WebSocket errors., Handle WebSocket close — attempt reconnection if still running., Handle successful WebSocket connection., Create and run a new WebSocket connection. (+22 more)
+### Community 2 - "Community 2"
+Cohesion: 0.07
+Nodes (132): BollingerSqueezeStrategy, EMACrossoverStrategy, _compute_fib_level(), _compute_structural_tp(), FibonacciRetracementStrategy, _has_sr_confluence(), _is_trending(), MACDMomentumStrategy (+124 more)
 
-### Community 7 - "SSE Pub/Sub System"
-Cohesion: 0.1
-Nodes (21): SSE (Server-Sent Events) Manager Thread-safe pub/sub for pushing real-time event, Thread-safe pub/sub manager for Server-Sent Events.      Multiple frontend clien, Create a new subscriber queue and register it.          Returns:             A q, Remove a subscriber queue. Called when SSE connection closes.          Args:, Publish an event to all active subscribers.          Events that cannot be deliv, Return the current number of active subscribers., Send a keepalive (None) to all subscribers.         Used by the SSE endpoint whe, SSEManager (+13 more)
+### Community 3 - "Community 3"
+Cohesion: 0.04
+Nodes (74): ping_status(), ConfirmedSignal, LLMPromptLog, Tracks detected trade setups that are being monitored (watching cards).     Crea, Final trade signals that have passed the LLM confirmation pipeline.     Displaye, Trade signals that were rejected by the LLM confirmation pipeline., Logs every interaction with the LLM.      Loose coupling referencing 'watching_s, RejectedSignal (+66 more)
 
-### Community 8 - "Docs & Fix Plans"
+### Community 4 - "Community 4"
+Cohesion: 0.03
+Nodes (58): from_db_row(), fetch_klines(), Fetch OHLCV data from Binance REST API and paginate automatically.     start_tim, Start the WebSocket stream in a background daemon thread., parse_binance_csv(), Parses a CSV uploaded directly matching Binance export format.     Expects colum, get_candles(), import_binance() (+50 more)
+
+### Community 5 - "Community 5"
+Cohesion: 0.03
+Nodes (71): Get S/R Zones Endpoint, Volume Profile Detection (Deferred), build_equity_curve(), compute_metrics(), run(), simulate_trades(), invalidate_cache(), get_git_commit_id() (+63 more)
+
+### Community 6 - "Community 6"
+Cohesion: 0.04
+Nodes (54): compute_indicators_from_df(), get_indicators(), invalidate_cache(), Indicators API Blueprint Endpoint: GET /api/indicators?symbol=BTCUSDT&timeframe=, Get technical indicators for a given symbol and timeframe.      Query params:, Manually invalidate the indicator cache for a symbol/timeframe.     Useful after, compute_all(), compute_atr() (+46 more)
+
+### Community 7 - "Community 7"
+Cohesion: 0.11
+Nodes (11): _make_candle(), _make_candle_list(), _make_indicators(), TestBollingerSqueeze, TestEMACrossover, TestFibonacciRetracement, TestMACDMomentum, TestRSIReversal (+3 more)
+
+### Community 8 - "Community 8"
+Cohesion: 0.05
+Nodes (40): run_backtest(), Strategy, get_strategy(), list_strategies(), Strategies API Blueprint Endpoints:   GET    /api/strategies              — List, List all registered strategies with their current enabled state and metadata., Get full details for a single strategy.      Args:         name: Strategy name (, Enable or disable a strategy.      Body (JSON):         enabled (required): true (+32 more)
+
+### Community 9 - "Community 9"
 Cohesion: 0.05
 Nodes (43): BacktestEngine (Vectorized), HTF Regime & Flat EMA Check, EMA Crossover Fix Plan V2, EMA S/R Zone Refusal Fix, EMA Volume Gate Fix, React Frontend (Vite + TypeScript), Hero Image Asset, Candle Close Data Flow (+35 more)
 
-### Community 9 - "LLM Client & Providers"
-Cohesion: 0.06
-Nodes (20): ABC, BaseLLMProvider, evaluate_prompt(), Abstract base class for all LLM providers., from_db_row(), Base Strategy Contract & Core Data Classes Defines the universal data structures, BaseLLMProvider, get_llm_provider() (+12 more)
+### Community 10 - "Community 10"
+Cohesion: 0.07
+Nodes (19): ABC, BaseLLMProvider, evaluate_prompt(), Abstract base class for all LLM providers., from_df_row(), Base Strategy Contract & Core Data Classes Defines the universal data structures, BaseLLMProvider, get_llm_provider() (+11 more)
 
-### Community 10 - "Frontend API Client"
+### Community 11 - "Community 11"
 Cohesion: 0.06
 Nodes (10): handleRunBacktest(), handleSubmit(), fetchDatasets(), fetchLLMLogs(), importBinanceData(), importCsvData(), runBacktest(), handleSubmit() (+2 more)
 
-### Community 11 - "SMC & Fibonacci Strategies"
-Cohesion: 0.14
-Nodes (9): _compute_fib_level(), _has_sr_confluence(), build_swing_map(), find_fractal_points(), Fractal and swing detection utilities. Shared across multiple strategy modules (, Build an ordered list of swing points using fractal pivot detection.          Re, Find fractal highs and lows in a list of candles.          A fractal high exists, find_strongest_unbroken_fractal() (+1 more)
+### Community 12 - "Community 12"
+Cohesion: 0.16
+Nodes (6): build_swing_map(), find_fractal_points(), Fractal and swing detection utilities. Shared across multiple strategy modules (, Build an ordered list of swing points using fractal pivot detection.          Re, Find fractal highs and lows in a list of candles.          A fractal high exists, OrderBlockRetestStrategy
 
-### Community 12 - "UI Config Panels"
+### Community 13 - "Community 13"
 Cohesion: 0.31
 Nodes (5): selectAll(), toggleStrategy(), handleStart(), setSelectedStrategies(), toggleStrategy()
 
-### Community 13 - "Trade Log Component"
+### Community 14 - "Community 14"
 Cohesion: 0.33
 Nodes (0): 
 
-### Community 14 - "App Router & Layout"
-Cohesion: 0.4
-Nodes (0): 
-
-### Community 15 - "Signal Pipeline Concepts"
+### Community 15 - "Community 15"
 Cohesion: 0.4
 Nodes (5): Built-in Strategies Overview, LLM as Final Judge Philosophy, Signal Pipeline, S/R Zone Detection Engine Overview, Telegram Integration
 
-### Community 16 - "Data Import Endpoints"
+### Community 16 - "Community 16"
 Cohesion: 0.4
 Nodes (5): Import Binance Endpoint, Import CSV Endpoint, CSV Parser, Binance Kline Fetcher, Historical Data Page
 
-### Community 17 - "Watching Card UI"
+### Community 17 - "Community 17"
+Cohesion: 0.4
+Nodes (5): Indicator Caching Mechanism, Live Analysis Architecture, Threading Model, Background Scheduler, S/R Per-Symbol Refresh Locks
+
+### Community 18 - "Community 18"
 Cohesion: 0.5
 Nodes (0): 
 
-### Community 18 - "SL/TP Calculation"
+### Community 19 - "Community 19"
 Cohesion: 0.5
-Nodes (2): Override to customize stop-loss calculation.         Default: Structural SL behi, Override to customize take-profit calculation.         Default: Risk-based TP at
+Nodes (0): 
 
-### Community 19 - "Rejected Card UI"
+### Community 20 - "Community 20"
 Cohesion: 0.67
 Nodes (0): 
 
-### Community 20 - "Confirmed Card UI"
+### Community 21 - "Community 21"
 Cohesion: 0.67
 Nodes (0): 
 
-### Community 21 - "LLM Queue & Signals"
+### Community 22 - "Community 22"
 Cohesion: 0.67
 Nodes (3): ConfirmedSignal DB Model, Modular LLM Provider System, LLM Queue Manager
 
-### Community 22 - "LLM Provider Architecture"
+### Community 23 - "Community 23"
 Cohesion: 0.67
 Nodes (3): BaseLLMProvider Abstract Class, LLM Provider Factory, OpenAI Compatible Provider
 
-### Community 23 - "Mini Chart Component"
+### Community 24 - "Community 24"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 24 - "Analysis Sessions Hook"
+### Community 25 - "Community 25"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 25 - "SSE React Hook"
+### Community 26 - "Community 26"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 26 - "Metrics Summary UI"
+### Community 27 - "Community 27"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 27 - "Equity Curve Chart"
+### Community 28 - "Community 28"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 28 - "Trade Chart Viz"
+### Community 29 - "Community 29"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 29 - "Watching Tab UI"
+### Community 30 - "Community 30"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 30 - "Historical Data Page"
+### Community 31 - "Community 31"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 31 - "Telegram Testing"
+### Community 32 - "Community 32"
+Cohesion: 1.0
+Nodes (0): 
+
+### Community 33 - "Community 33"
+Cohesion: 1.0
+Nodes (0): 
+
+### Community 34 - "Community 34"
 Cohesion: 1.0
 Nodes (1): Standalone Telegram test — bypasses the entire app to isolate credential issues.
 
-### Community 32 - "DB Migration Script"
+### Community 35 - "Community 35"
 Cohesion: 1.0
 Nodes (1): Standalone migration script — connects directly to PostgreSQL without going thro
 
-### Community 33 - "App Configuration"
+### Community 36 - "Community 36"
+Cohesion: 1.0
+Nodes (1): Standalone script to clear the corrupted candles and sr_zones data. Connects dir
+
+### Community 37 - "Community 37"
 Cohesion: 1.0
 Nodes (1): Core Application Configuration Shared configuration constants used across module
 
-### Community 34 - "Bug Fix Knowledge Base"
+### Community 38 - "Community 38"
 Cohesion: 1.0
 Nodes (2): Fixed Bugs Registry, Strategies Fixes Knowledge Base
 
-### Community 35 - "Database Architecture"
+### Community 39 - "Community 39"
 Cohesion: 1.0
 Nodes (2): Database Schema Overview, TimescaleDB Rationale
 
-### Community 36 - "ESLint Config"
+### Community 40 - "Community 40"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 37 - "Vite Build Config"
+### Community 41 - "Community 41"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 38 - "Backtest Types"
+### Community 42 - "Community 42"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 39 - "Signal Types"
+### Community 43 - "Community 43"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 40 - "Signal Feed Page"
+### Community 44 - "Community 44"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 41 - "Rejected Tab"
+### Community 45 - "Community 45"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 42 - "Confirmed Tab"
+### Community 46 - "Community 46"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 43 - "Flask Entry Point"
+### Community 47 - "Community 47"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 44 - "Candle From Dict"
+### Community 48 - "Community 48"
+Cohesion: 1.0
+Nodes (0): 
+
+### Community 49 - "Community 49"
+Cohesion: 1.0
+Nodes (0): 
+
+### Community 50 - "Community 50"
+Cohesion: 1.0
+Nodes (0): 
+
+### Community 51 - "Community 51"
+Cohesion: 1.0
+Nodes (0): 
+
+### Community 52 - "Community 52"
 Cohesion: 1.0
 Nodes (1): Create a Candle from a Candle.to_dict() result.
 
-### Community 45 - "Candle From DataFrame"
+### Community 53 - "Community 53"
 Cohesion: 1.0
 Nodes (1): Create a Candle from a pandas DataFrame row.
 
-### Community 46 - "Candle Body Size"
+### Community 54 - "Community 54"
 Cohesion: 1.0
 Nodes (1): Absolute size of the candle body (|close - open|).
 
-### Community 47 - "Candle Range Size"
+### Community 55 - "Community 55"
 Cohesion: 1.0
 Nodes (1): Total range of the candle (high - low).
 
-### Community 48 - "Upper Wick Property"
+### Community 56 - "Community 56"
 Cohesion: 1.0
 Nodes (1): Size of the upper wick.
 
-### Community 49 - "Lower Wick Property"
+### Community 57 - "Community 57"
 Cohesion: 1.0
 Nodes (1): Size of the lower wick.
 
-### Community 50 - "Bullish Check"
+### Community 58 - "Community 58"
 Cohesion: 1.0
 Nodes (1): True if close > open.
 
-### Community 51 - "Bearish Check"
+### Community 59 - "Community 59"
 Cohesion: 1.0
 Nodes (1): True if close < open.
 
-### Community 52 - "Indicators Snapshot"
+### Community 60 - "Community 60"
 Cohesion: 1.0
 Nodes (1): Build an Indicators snapshot from full indicator series at position idx.
 
-### Community 53 - "Strategy Scan Method"
+### Community 61 - "Community 61"
 Cohesion: 1.0
 Nodes (1): Called on every candle close for each active timeframe.         Return a SetupSi
 
-### Community 54 - "Backend Init"
+### Community 62 - "Community 62"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 55 - "LLM Evaluate Prompt"
+### Community 63 - "Community 63"
 Cohesion: 1.0
 Nodes (1): Sends the prompt to the LLM backend.                  Args:             system_p
 
-### Community 56 - "LLM Ping Status"
+### Community 64 - "Community 64"
 Cohesion: 1.0
 Nodes (1): Pings the provider to check if the service is reachable.                  Return
 
-### Community 57 - "Providers Init"
+### Community 65 - "Community 65"
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 58 - "Stream Active Check"
+### Community 66 - "Community 66"
 Cohesion: 1.0
 Nodes (1): Check if the stream is currently active.
 
-### Community 59 - "Platform Overview"
+### Community 67 - "Community 67"
+Cohesion: 1.0
+Nodes (1): Build an Indicators snapshot from full indicator series at position idx.
+
+### Community 68 - "Community 68"
+Cohesion: 1.0
+Nodes (1): Universal output of every strategy's scan() method.     This object flows throug
+
+### Community 69 - "Community 69"
+Cohesion: 1.0
+Nodes (1): Serialize to a JSON-safe dictionary.
+
+### Community 70 - "Community 70"
+Cohesion: 1.0
+Nodes (1): Abstract base class for all trading strategies.      All strategies must impleme
+
+### Community 71 - "Community 71"
+Cohesion: 1.0
+Nodes (1): Called on every candle close for each active timeframe.         Return a SetupSi
+
+### Community 72 - "Community 72"
+Cohesion: 1.0
+Nodes (1): Override to customize stop-loss calculation.         Default: Structural SL behi
+
+### Community 73 - "Community 73"
+Cohesion: 1.0
+Nodes (1): Override to customize take-profit calculation.         Default: Risk-based TP at
+
+### Community 74 - "Community 74"
+Cohesion: 1.0
+Nodes (1): Override to skip LLM confirmation for this strategy. Default: True.
+
+### Community 75 - "Community 75"
+Cohesion: 1.0
+Nodes (1): Fetch OHLCV data from Binance REST API and paginate automatically.     start_tim
+
+### Community 76 - "Community 76"
+Cohesion: 1.0
+Nodes (1): Manages Binance WebSocket kline streams for live candle data.      Architecture:
+
+### Community 77 - "Community 77"
+Cohesion: 1.0
+Nodes (1): Args:             symbol: Trading pair (e.g. "BTCUSDT")             timeframes:
+
+### Community 78 - "Community 78"
+Cohesion: 1.0
+Nodes (1): Build the combined stream URL for all symbol/timeframe pairs.
+
+### Community 79 - "Community 79"
+Cohesion: 1.0
+Nodes (1): Handle incoming WebSocket messages.
+
+### Community 80 - "Community 80"
+Cohesion: 1.0
+Nodes (1): Handle WebSocket errors.
+
+### Community 81 - "Community 81"
+Cohesion: 1.0
+Nodes (1): Handle WebSocket close — attempt reconnection if still running.
+
+### Community 82 - "Community 82"
+Cohesion: 1.0
+Nodes (1): Handle successful WebSocket connection.
+
+### Community 83 - "Community 83"
+Cohesion: 1.0
+Nodes (1): Create and run a new WebSocket connection.
+
+### Community 84 - "Community 84"
+Cohesion: 1.0
+Nodes (1): Start the WebSocket stream in a background daemon thread.
+
+### Community 85 - "Community 85"
+Cohesion: 1.0
+Nodes (1): Stop the WebSocket stream and clean up.
+
+### Community 86 - "Community 86"
+Cohesion: 1.0
+Nodes (1): Check if the stream is currently active.
+
+### Community 87 - "Community 87"
 Cohesion: 1.0
 Nodes (1): Crypto Signal Intelligence Platform
 
-### Community 60 - "Tech Stack"
+### Community 88 - "Community 88"
 Cohesion: 1.0
 Nodes (1): Tech Stack
 
-### Community 61 - "Symbols & Timeframes"
+### Community 89 - "Community 89"
 Cohesion: 1.0
 Nodes (1): Target Symbols & Timeframes
 
-### Community 62 - "Design Rationale"
+### Community 90 - "Community 90"
 Cohesion: 1.0
 Nodes (1): Key Design Decisions & Rationale
 
-### Community 63 - "Default SL/TP"
+### Community 91 - "Community 91"
 Cohesion: 1.0
 Nodes (1): Default SL/TP Formulas
 
-### Community 64 - "Frontend Entry"
+### Community 92 - "Community 92"
+Cohesion: 1.0
+Nodes (1): Get Indicators Endpoint
+
+### Community 93 - "Community 93"
+Cohesion: 1.0
+Nodes (1): Swing Point Detection
+
+### Community 94 - "Community 94"
+Cohesion: 1.0
+Nodes (1): Round Number Detection
+
+### Community 95 - "Community 95"
+Cohesion: 1.0
+Nodes (1): Previous Period H/L Detection
+
+### Community 96 - "Community 96"
 Cohesion: 1.0
 Nodes (1): Frontend Entry HTML
 
-### Community 65 - "Vite Logo"
+### Community 97 - "Community 97"
 Cohesion: 1.0
 Nodes (1): Vite Logo Asset
 
-### Community 66 - "React Logo"
+### Community 98 - "Community 98"
 Cohesion: 1.0
 Nodes (1): React Logo Asset
 
-### Community 67 - "UI Icons"
+### Community 99 - "Community 99"
 Cohesion: 1.0
 Nodes (1): UI Icons SVG Sprite
 
-### Community 68 - "Favicon"
+### Community 100 - "Community 100"
 Cohesion: 1.0
 Nodes (1): Favicon
 
 ## Knowledge Gaps
-- **132 isolated node(s):** `Standalone Telegram test — bypasses the entire app to isolate credential issues.`, `Standalone migration script — connects directly to PostgreSQL without going thro`, `Strategies API Blueprint Endpoints:   GET    /api/strategies              — List`, `List all registered strategies with their current enabled state and metadata.`, `Get full details for a single strategy.      Args:         name: Strategy name (` (+127 more)
+- **160 isolated node(s):** `Standalone Telegram test — bypasses the entire app to isolate credential issues.`, `Standalone migration script — connects directly to PostgreSQL without going thro`, `Standalone script to clear the corrupted candles and sr_zones data. Connects dir`, `Strategies API Blueprint Endpoints:   GET    /api/strategies              — List`, `List all registered strategies with their current enabled state and metadata.` (+155 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Mini Chart Component`** (2 nodes): `MiniChart.tsx`, `MiniChart()`
+- **Thin community `Community 24`** (2 nodes): `MiniChart.tsx`, `MiniChart()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Analysis Sessions Hook`** (2 nodes): `useAnalysisSessions.ts`, `useAnalysisSessions()`
+- **Thin community `Community 25`** (2 nodes): `useAnalysisSessions.ts`, `useAnalysisSessions()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `SSE React Hook`** (2 nodes): `useSSE.ts`, `useSSE()`
+- **Thin community `Community 26`** (2 nodes): `useSSE.ts`, `useSSE()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Metrics Summary UI`** (2 nodes): `MetricsSummary.tsx`, `formatDuration()`
+- **Thin community `Community 27`** (2 nodes): `useChartData()`, `useChartData.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Equity Curve Chart`** (2 nodes): `EquityCurve()`, `EquityCurve.tsx`
+- **Thin community `Community 28`** (2 nodes): `toUTC()`, `CandleChart.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Trade Chart Viz`** (2 nodes): `TradeChart.tsx`, `buildChart()`
+- **Thin community `Community 29`** (2 nodes): `MetricsSummary.tsx`, `formatDuration()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Watching Tab UI`** (2 nodes): `WatchingTab.tsx`, `WatchingTab()`
+- **Thin community `Community 30`** (2 nodes): `EquityCurve()`, `EquityCurve.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Historical Data Page`** (2 nodes): `HistoricalData.tsx`, `HistoricalData()`
+- **Thin community `Community 31`** (2 nodes): `buildChart()`, `TradeChart.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Telegram Testing`** (2 nodes): `test_telegram.py`, `Standalone Telegram test — bypasses the entire app to isolate credential issues.`
+- **Thin community `Community 32`** (2 nodes): `WatchingTab.tsx`, `WatchingTab()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `DB Migration Script`** (2 nodes): `fix_db.py`, `Standalone migration script — connects directly to PostgreSQL without going thro`
+- **Thin community `Community 33`** (2 nodes): `HistoricalData.tsx`, `HistoricalData()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `App Configuration`** (2 nodes): `config.py`, `Core Application Configuration Shared configuration constants used across module`
+- **Thin community `Community 34`** (2 nodes): `test_telegram.py`, `Standalone Telegram test — bypasses the entire app to isolate credential issues.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Bug Fix Knowledge Base`** (2 nodes): `Fixed Bugs Registry`, `Strategies Fixes Knowledge Base`
+- **Thin community `Community 35`** (2 nodes): `fix_db.py`, `Standalone migration script — connects directly to PostgreSQL without going thro`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Database Architecture`** (2 nodes): `Database Schema Overview`, `TimescaleDB Rationale`
+- **Thin community `Community 36`** (2 nodes): `Standalone script to clear the corrupted candles and sr_zones data. Connects dir`, `clear_candles.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `ESLint Config`** (1 nodes): `eslint.config.js`
+- **Thin community `Community 37`** (2 nodes): `config.py`, `Core Application Configuration Shared configuration constants used across module`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Vite Build Config`** (1 nodes): `vite.config.ts`
+- **Thin community `Community 38`** (2 nodes): `Fixed Bugs Registry`, `Strategies Fixes Knowledge Base`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Backtest Types`** (1 nodes): `backtest.ts`
+- **Thin community `Community 39`** (2 nodes): `Database Schema Overview`, `TimescaleDB Rationale`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Signal Types`** (1 nodes): `signals.ts`
+- **Thin community `Community 40`** (1 nodes): `test_db.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Signal Feed Page`** (1 nodes): `SignalFeed.tsx`
+- **Thin community `Community 41`** (1 nodes): `eslint.config.js`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Rejected Tab`** (1 nodes): `RejectedTab.tsx`
+- **Thin community `Community 42`** (1 nodes): `vite.config.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Confirmed Tab`** (1 nodes): `ConfirmedTab.tsx`
+- **Thin community `Community 43`** (1 nodes): `main.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Flask Entry Point`** (1 nodes): `run.py`
+- **Thin community `Community 44`** (1 nodes): `backtest.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Candle From Dict`** (1 nodes): `Create a Candle from a Candle.to_dict() result.`
+- **Thin community `Community 45`** (1 nodes): `signals.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Candle From DataFrame`** (1 nodes): `Create a Candle from a pandas DataFrame row.`
+- **Thin community `Community 46`** (1 nodes): `Charts.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Candle Body Size`** (1 nodes): `Absolute size of the candle body (|close - open|).`
+- **Thin community `Community 47`** (1 nodes): `ChartControls.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Candle Range Size`** (1 nodes): `Total range of the candle (high - low).`
+- **Thin community `Community 48`** (1 nodes): `SignalFeed.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Upper Wick Property`** (1 nodes): `Size of the upper wick.`
+- **Thin community `Community 49`** (1 nodes): `RejectedTab.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Lower Wick Property`** (1 nodes): `Size of the lower wick.`
+- **Thin community `Community 50`** (1 nodes): `ConfirmedTab.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Bullish Check`** (1 nodes): `True if close > open.`
+- **Thin community `Community 51`** (1 nodes): `run.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Bearish Check`** (1 nodes): `True if close < open.`
+- **Thin community `Community 52`** (1 nodes): `Create a Candle from a Candle.to_dict() result.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Indicators Snapshot`** (1 nodes): `Build an Indicators snapshot from full indicator series at position idx.`
+- **Thin community `Community 53`** (1 nodes): `Create a Candle from a pandas DataFrame row.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Strategy Scan Method`** (1 nodes): `Called on every candle close for each active timeframe.         Return a SetupSi`
+- **Thin community `Community 54`** (1 nodes): `Absolute size of the candle body (|close - open|).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Backend Init`** (1 nodes): `__init__.py`
+- **Thin community `Community 55`** (1 nodes): `Total range of the candle (high - low).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `LLM Evaluate Prompt`** (1 nodes): `Sends the prompt to the LLM backend.                  Args:             system_p`
+- **Thin community `Community 56`** (1 nodes): `Size of the upper wick.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `LLM Ping Status`** (1 nodes): `Pings the provider to check if the service is reachable.                  Return`
+- **Thin community `Community 57`** (1 nodes): `Size of the lower wick.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Providers Init`** (1 nodes): `__init__.py`
+- **Thin community `Community 58`** (1 nodes): `True if close > open.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Stream Active Check`** (1 nodes): `Check if the stream is currently active.`
+- **Thin community `Community 59`** (1 nodes): `True if close < open.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Platform Overview`** (1 nodes): `Crypto Signal Intelligence Platform`
+- **Thin community `Community 60`** (1 nodes): `Build an Indicators snapshot from full indicator series at position idx.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Tech Stack`** (1 nodes): `Tech Stack`
+- **Thin community `Community 61`** (1 nodes): `Called on every candle close for each active timeframe.         Return a SetupSi`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Symbols & Timeframes`** (1 nodes): `Target Symbols & Timeframes`
+- **Thin community `Community 62`** (1 nodes): `__init__.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Design Rationale`** (1 nodes): `Key Design Decisions & Rationale`
+- **Thin community `Community 63`** (1 nodes): `Sends the prompt to the LLM backend.                  Args:             system_p`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Default SL/TP`** (1 nodes): `Default SL/TP Formulas`
+- **Thin community `Community 64`** (1 nodes): `Pings the provider to check if the service is reachable.                  Return`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Frontend Entry`** (1 nodes): `Frontend Entry HTML`
+- **Thin community `Community 65`** (1 nodes): `__init__.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Vite Logo`** (1 nodes): `Vite Logo Asset`
+- **Thin community `Community 66`** (1 nodes): `Check if the stream is currently active.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `React Logo`** (1 nodes): `React Logo Asset`
+- **Thin community `Community 67`** (1 nodes): `Build an Indicators snapshot from full indicator series at position idx.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `UI Icons`** (1 nodes): `UI Icons SVG Sprite`
+- **Thin community `Community 68`** (1 nodes): `Universal output of every strategy's scan() method.     This object flows throug`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Favicon`** (1 nodes): `Favicon`
+- **Thin community `Community 69`** (1 nodes): `Serialize to a JSON-safe dictionary.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 70`** (1 nodes): `Abstract base class for all trading strategies.      All strategies must impleme`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 71`** (1 nodes): `Called on every candle close for each active timeframe.         Return a SetupSi`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 72`** (1 nodes): `Override to customize stop-loss calculation.         Default: Structural SL behi`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 73`** (1 nodes): `Override to customize take-profit calculation.         Default: Risk-based TP at`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 74`** (1 nodes): `Override to skip LLM confirmation for this strategy. Default: True.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 75`** (1 nodes): `Fetch OHLCV data from Binance REST API and paginate automatically.     start_tim`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 76`** (1 nodes): `Manages Binance WebSocket kline streams for live candle data.      Architecture:`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 77`** (1 nodes): `Args:             symbol: Trading pair (e.g. "BTCUSDT")             timeframes:`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 78`** (1 nodes): `Build the combined stream URL for all symbol/timeframe pairs.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 79`** (1 nodes): `Handle incoming WebSocket messages.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 80`** (1 nodes): `Handle WebSocket errors.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 81`** (1 nodes): `Handle WebSocket close — attempt reconnection if still running.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 82`** (1 nodes): `Handle successful WebSocket connection.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 83`** (1 nodes): `Create and run a new WebSocket connection.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 84`** (1 nodes): `Start the WebSocket stream in a background daemon thread.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 85`** (1 nodes): `Stop the WebSocket stream and clean up.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 86`** (1 nodes): `Check if the stream is currently active.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 87`** (1 nodes): `Crypto Signal Intelligence Platform`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 88`** (1 nodes): `Tech Stack`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 89`** (1 nodes): `Target Symbols & Timeframes`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 90`** (1 nodes): `Key Design Decisions & Rationale`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 91`** (1 nodes): `Default SL/TP Formulas`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 92`** (1 nodes): `Get Indicators Endpoint`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 93`** (1 nodes): `Swing Point Detection`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 94`** (1 nodes): `Round Number Detection`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 95`** (1 nodes): `Previous Period H/L Detection`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 96`** (1 nodes): `Frontend Entry HTML`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 97`** (1 nodes): `Vite Logo Asset`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 98`** (1 nodes): `React Logo Asset`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 99`** (1 nodes): `UI Icons SVG Sprite`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 100`** (1 nodes): `Favicon`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `SetupSignal` connect `Strategy Implementations` to `S/R Engine & Scheduling`, `BaseStrategy Contract`, `Signals & Notifications`, `Indicators & Backtesting`, `LLM Client & Providers`, `SMC & Fibonacci Strategies`?**
-  _High betweenness centrality (0.195) - this node is a cross-community bridge._
-- **Why does `Candle` connect `Strategy Implementations` to `S/R Engine & Scheduling`, `BaseStrategy Contract`, `Signals & Notifications`, `LLM Client & Providers`, `SMC & Fibonacci Strategies`?**
-  _High betweenness centrality (0.153) - this node is a cross-community bridge._
-- **Why does `BaseStrategy` connect `Strategy Implementations` to `S/R Engine & Scheduling`, `BaseStrategy Contract`, `Strategy Registry & Loader`, `LLM Client & Providers`, `SMC & Fibonacci Strategies`, `SL/TP Calculation`?**
-  _High betweenness centrality (0.136) - this node is a cross-community bridge._
-- **Are the 271 inferred relationships involving `SetupSignal` (e.g. with `LLMQueueManager` and `Background worker that processes SetupSignals through the LLM.     Prevents the`) actually correct?**
-  _`SetupSignal` has 271 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 243 inferred relationships involving `Candle` (e.g. with `LLMQueueManager` and `Background worker that processes SetupSignals through the LLM.     Prevents the`) actually correct?**
-  _`Candle` has 243 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 231 inferred relationships involving `Indicators` (e.g. with `LLMQueueManager` and `Background worker that processes SetupSignals through the LLM.     Prevents the`) actually correct?**
-  _`Indicators` has 231 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 179 inferred relationships involving `BaseStrategy` (e.g. with `StrategyRunner` and `Strategy Runner Orchestrates running strategies against candle data and collecti`) actually correct?**
-  _`BaseStrategy` has 179 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `SetupSignal` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 7`, `Community 10`, `Community 12`?**
+  _High betweenness centrality (0.191) - this node is a cross-community bridge._
+- **Why does `Candle` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 7`, `Community 10`, `Community 12`?**
+  _High betweenness centrality (0.183) - this node is a cross-community bridge._
+- **Why does `IndicatorService` connect `Community 1` to `Community 4`, `Community 6`?**
+  _High betweenness centrality (0.102) - this node is a cross-community bridge._
+- **Are the 360 inferred relationships involving `SetupSignal` (e.g. with `BacktestEngine` and `Backtesting Engine Core engine for running strategies against historical data an`) actually correct?**
+  _`SetupSignal` has 360 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 343 inferred relationships involving `Candle` (e.g. with `AnalysisSession` and `LiveScanner`) actually correct?**
+  _`Candle` has 343 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 316 inferred relationships involving `Indicators` (e.g. with `OrderBlockRetestStrategy` and `Institutional Order Block (OB) Retest Strategy — Confluent Edition Smart Money C`) actually correct?**
+  _`Indicators` has 316 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 208 inferred relationships involving `BaseStrategy` (e.g. with `BacktestEngine` and `Backtesting Engine Core engine for running strategies against historical data an`) actually correct?**
+  _`BaseStrategy` has 208 INFERRED edges - model-reasoned connections that need verification._
