@@ -96,6 +96,47 @@ def import_csv():
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
+@data_bp.route('/candles', methods=['GET'])
+def get_candles():
+    """
+    Fetch raw OHLCV candle data for charting.
+
+    Query params:
+        symbol (required): Trading pair, e.g. 'BTCUSDT'
+        timeframe (required): Candle timeframe, e.g. '1h', '4h', '1d'
+        limit (optional): Number of most-recent candles to return. Default 500, max 5000.
+    """
+    symbol = request.args.get('symbol')
+    timeframe = request.args.get('timeframe')
+    limit = request.args.get('limit', 500, type=int)
+
+    if not symbol or not timeframe:
+        return jsonify({'error': 'Missing required query parameters: symbol, timeframe'}), 400
+
+    limit = max(1, min(limit, 5000))
+
+    try:
+        # Fetch the N most-recent candles, then return in ascending order
+        candles = (
+            Candle.query
+            .filter_by(symbol=symbol, timeframe=timeframe)
+            .order_by(Candle.open_time.desc())
+            .limit(limit)
+            .all()
+        )
+        candles.reverse()  # ascending order for chart rendering
+
+        return jsonify({
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'candles': [c.to_dict() for c in candles],
+            'count': len(candles),
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @data_bp.route('/datasets', methods=['GET'])
 def get_datasets():
     try:

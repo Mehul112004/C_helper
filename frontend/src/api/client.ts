@@ -28,7 +28,28 @@ export const fetchDatasets = async () => {
   return data.datasets;
 };
 
-// ---------- Phase 2: Indicators & S/R Zones ----------
+// ---------- Charts: Raw Candle Data ----------
+
+export interface CandleData {
+  open_time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export const fetchCandles = async (
+  symbol: string,
+  timeframe: string,
+  limit = 500
+): Promise<{ candles: CandleData[]; count: number; symbol: string; timeframe: string }> => {
+  const { data } = await apiClient.get('/data/candles', {
+    params: { symbol, timeframe, limit },
+  });
+  return data;
+};
+
 
 export interface IndicatorLatest {
   ema_9: number | null;

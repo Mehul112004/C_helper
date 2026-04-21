@@ -2,8 +2,9 @@ import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react
 import HistoricalData from './pages/HistoricalData/HistoricalData';
 import SignalFeed from './pages/SignalFeed/SignalFeed';
 import Backtest from './pages/Backtest/Backtest';
+import Charts from './pages/Charts/Charts';
 import LLMPrompts from './pages/LLMPrompts/LLMPrompts';
-import { LineChart, LayoutDashboard, History, Bot } from 'lucide-react';
+import { LineChart, LayoutDashboard, History, Bot, CandlestickChart } from 'lucide-react';
 
 function NavLink({ to, icon: Icon, label }: { to: string; icon: React.ElementType; label: string }) {
   const location = useLocation();
@@ -34,6 +35,7 @@ function AppLayout() {
         </div>
         <nav className="flex-1 p-4 space-y-2">
           <NavLink to="/signal-feed" icon={LayoutDashboard} label="Signal Feed" />
+          <NavLink to="/charts" icon={CandlestickChart} label="Charts" />
           <NavLink to="/backtest" icon={LineChart} label="Backtest Engine" />
           <NavLink to="/" icon={History} label="Historical Data" />
           <NavLink to="/llm-prompts" icon={Bot} label="LLM Prompts" />
@@ -45,6 +47,7 @@ function AppLayout() {
         <Routes>
           <Route path="/" element={<HistoricalData />} />
           <Route path="/signal-feed" element={<SignalFeed />} />
+          <Route path="/charts" element={<Charts />} />
           <Route path="/backtest" element={<Backtest />} />
           <Route path="/llm-prompts" element={<LLMPrompts />} />
         </Routes>
