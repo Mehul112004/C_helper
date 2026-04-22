@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.core.base_strategy import Candle
@@ -439,6 +439,9 @@ class LiveScanner:
         Handle every kline tick (open and in-progress candles).
         Throttled to max 1 emit per 500ms per symbol/timeframe pair.
         Always emits immediately for is_closed=True (candle finalization).
+
+        Also persists the live candle to DB every ~5s so that the chart
+        REST endpoint always includes the currently open candle.
         """
         with self._lock:
             session = self._sessions.get(session_id)
@@ -453,6 +456,31 @@ class LiveScanner:
             if now - last_emit < 0.5:
                 return
         self._live_candle_throttle[throttle_key] = now
+
+        # ── Persist live candle to DB (throttled to every ~5s) ──
+        # This ensures GET /api/data/candles always returns the open candle.
+        if self._app:
+            persist_key = f"db_{symbol}_{timeframe}"
+            last_persist = self._live_candle_throttle.get(persist_key, 0)
+            if now - last_persist >= 5.0 or candle_data.get("is_closed", False):
+                self._live_candle_throttle[persist_key] = now
+                try:
+                    with self._app.app_context():
+                        self._upsert_candle({
+                            'symbol': symbol,
+                            'timeframe': timeframe,
+                            'open_time': datetime.fromtimestamp(
+                                candle_data['open_time'] / 1000.0,
+                                tz=timezone.utc,
+                            ),
+                            'open': candle_data['open'],
+                            'high': candle_data['high'],
+                            'low': candle_data['low'],
+                            'close': candle_data['close'],
+                            'volume': candle_data['volume'],
+                        })
+                except Exception as e:
+                    logger.error(f"[LiveScanner] Live candle DB persist error: {e}")
 
         sse_manager.publish("live_candle", {
             "session_id": session_id,
@@ -470,34 +498,67 @@ class LiveScanner:
 
     def _backfill_historical_data(self, symbol: str, timeframes: list[str]):
         """
-        Pre-flight data backfill: fetch historical candles via Binance REST API
-        for any timeframe that has fewer than MIN_BACKFILL_CANDLES in the DB.
+        Pre-flight data backfill: fetch historical candles via Binance REST API.
 
-        This ensures indicators (EMA 200, RSI, etc.) have enough warm-up data
-        to produce valid non-NaN values from the very first candle close.
+        Two modes:
+        1. Cold start: DB has fewer than MIN_BACKFILL_CANDLES → full historical fetch.
+        2. Top-up: DB has enough candles but may have a gap from backend downtime →
+           fetch from last stored candle to now to fill any restart gaps immediately.
+
+        This ensures indicators have warm-up data AND the chart never has holes
+        after a backend restart.
         """
-        from app.models.db import Candle as CandleModel
+        from app.models.db import Candle as CandleModel, db
 
         for tf in timeframes:
             existing_count = CandleModel.query.filter_by(
                 symbol=symbol, timeframe=tf
             ).count()
 
+            tf_minutes = TIMEFRAME_MINUTES.get(tf, 60)
+            now_ms = int(time.time() * 1000)
+
             if existing_count >= MIN_BACKFILL_CANDLES:
-                logger.info(f"[LiveScanner] Backfill skip: {symbol}/{tf} already has "
-                            f"{existing_count} candles (≥{MIN_BACKFILL_CANDLES})")
+                # ── Top-up mode: fill gap from last stored candle to now ──
+                last_candle = (
+                    CandleModel.query
+                    .filter_by(symbol=symbol, timeframe=tf)
+                    .order_by(CandleModel.open_time.desc())
+                    .first()
+                )
+                if last_candle:
+                    last_open_ms = int(last_candle.open_time.timestamp() * 1000)
+                    # Start from one candle period after the last stored candle
+                    gap_start_ms = last_open_ms + (tf_minutes * 60 * 1000)
+
+                    if gap_start_ms >= now_ms:
+                        logger.info(f"[LiveScanner] Backfill skip: {symbol}/{tf} is up-to-date "
+                                    f"({existing_count} candles)")
+                        continue
+
+                    logger.info(f"[LiveScanner] Top-up backfill: {symbol}/{tf} — "
+                                f"fetching gap from {last_candle.open_time.isoformat()} to now...")
+                    try:
+                        candles = fetch_klines(symbol, tf, gap_start_ms, now_ms)
+                        if candles:
+                            for candle_data in candles:
+                                self._upsert_candle(candle_data, commit=False)
+                            db.session.commit()
+                            logger.info(f"[LiveScanner] ✅ Top-up complete: {symbol}/{tf} — "
+                                        f"upserted {len(candles)} candles")
+                        else:
+                            logger.info(f"[LiveScanner] Top-up: no new candles for {symbol}/{tf}")
+                    except Exception as e:
+                        logger.error(f"[LiveScanner] Top-up backfill failed for {symbol}/{tf}: {e}")
                 continue
 
-            needed = MIN_BACKFILL_CANDLES - existing_count
+            # ── Cold start mode: full historical fetch ──
             logger.info(f"[LiveScanner] Backfilling {symbol}/{tf}: have {existing_count}, "
                         f"fetching ~{MIN_BACKFILL_CANDLES} candles via REST API...")
 
             try:
-                # Calculate how far back to fetch
-                tf_minutes = TIMEFRAME_MINUTES.get(tf, 60)
                 # Fetch extra to account for gaps/weekends
                 lookback_minutes = MIN_BACKFILL_CANDLES * tf_minutes * 1.2
-                now_ms = int(time.time() * 1000)
                 start_ms = now_ms - int(lookback_minutes * 60 * 1000)
 
                 candles = fetch_klines(symbol, tf, start_ms, now_ms)
@@ -512,7 +573,6 @@ class LiveScanner:
                     self._upsert_candle(candle_data, commit=False)
                     upserted += 1
 
-                from app.models.db import db
                 db.session.commit()
 
                 logger.info(f"[LiveScanner] ✅ Backfill complete: {symbol}/{tf} — "
