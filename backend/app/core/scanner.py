@@ -157,6 +157,7 @@ class LiveScanner:
                 on_candle_close=lambda sym, tf, data: self._on_candle_close(session_id, sym, tf, data),
                 on_price_update=lambda sym, price, ts: self._on_price_update(session_id, sym, price, ts),
                 on_live_candle=lambda sym, tf, data: self._on_live_candle(session_id, sym, tf, data),
+                on_reconnect=lambda sym: self._on_ws_reconnect(session_id, sym),
             )
 
             session = AnalysisSession(
@@ -541,11 +542,24 @@ class LiveScanner:
                     try:
                         candles = fetch_klines(symbol, tf, gap_start_ms, now_ms)
                         if candles:
+                            upserted = 0
+                            skipped = 0
                             for candle_data in candles:
+                                # Guard: skip the unclosed candle Binance appends
+                                expected_close = candle_data['open_time'] + timedelta(minutes=tf_minutes)
+                                if expected_close > datetime.now(timezone.utc):
+                                    skipped += 1
+                                    logger.info(
+                                        f"[LiveScanner] ⏭ Skipping unclosed candle: {symbol}/{tf} "
+                                        f"open_time={candle_data['open_time'].isoformat()}"
+                                    )
+                                    continue
                                 self._upsert_candle(candle_data, commit=False)
+                                upserted += 1
                             db.session.commit()
                             logger.info(f"[LiveScanner] ✅ Top-up complete: {symbol}/{tf} — "
-                                        f"upserted {len(candles)} candles")
+                                        f"upserted {upserted} candles"
+                                        f"{f', skipped {skipped} unclosed' if skipped else ''}")
                         else:
                             logger.info(f"[LiveScanner] Top-up: no new candles for {symbol}/{tf}")
                     except Exception as e:
@@ -569,14 +583,25 @@ class LiveScanner:
 
                 # Bulk upsert the fetched candles
                 upserted = 0
+                skipped = 0
                 for candle_data in candles:
+                    # Guard: skip the unclosed candle Binance appends
+                    expected_close = candle_data['open_time'] + timedelta(minutes=tf_minutes)
+                    if expected_close > datetime.now(timezone.utc):
+                        skipped += 1
+                        logger.info(
+                            f"[LiveScanner] ⏭ Skipping unclosed candle: {symbol}/{tf} "
+                            f"open_time={candle_data['open_time'].isoformat()}"
+                        )
+                        continue
                     self._upsert_candle(candle_data, commit=False)
                     upserted += 1
 
                 db.session.commit()
 
                 logger.info(f"[LiveScanner] ✅ Backfill complete: {symbol}/{tf} — "
-                            f"upserted {upserted} candles")
+                            f"upserted {upserted} candles"
+                            f"{f', skipped {skipped} unclosed' if skipped else ''}")
 
             except Exception as e:
                 logger.error(f"[LiveScanner] Backfill failed for {symbol}/{tf}: {e}")
@@ -830,6 +855,38 @@ class LiveScanner:
         except Exception as e:
             logger.error(f"Error fetching HTF candles for {symbol}/{timeframe} -> {htf}: {e}")
             return None
+
+    def _on_ws_reconnect(self, session_id: str, symbol: str):
+        """
+        Fired when BinanceStreamManager reconnects after a drop.
+        Immediately backfills any missing candles for all timeframes
+        in the session so gap healing doesn't wait for the next candle close.
+        """
+        if not self._app:
+            return
+
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if not session or session.status != "active":
+                return
+            timeframes = list(session.timeframes)
+
+        logger.warning(
+            f"[LiveScanner] ⚡ WebSocket RECONNECTED for {symbol}. "
+            f"Triggering immediate gap backfill for {timeframes}..."
+        )
+
+        with self._app.app_context():
+            self._backfill_historical_data(symbol, timeframes)
+            # Invalidate indicator caches so next candle_close
+            # recomputes from the healed data
+            from app.core.indicators import IndicatorService
+            for tf in timeframes:
+                IndicatorService.invalidate_cache(symbol, tf)
+
+        logger.info(
+            f"[LiveScanner] ✅ Reconnect backfill complete for {symbol}/{timeframes}"
+        )
 
 
 # Module-level singleton

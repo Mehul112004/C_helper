@@ -87,6 +87,7 @@ class BinanceStreamManager:
         on_candle_close=None,
         on_price_update=None,
         on_live_candle=None,
+        on_reconnect=None,
         max_retries: int = 20,
     ):
         """
@@ -96,6 +97,7 @@ class BinanceStreamManager:
             on_candle_close: Callback(symbol, timeframe, candle_data_dict) on closed candles
             on_price_update: Callback(symbol, price, timestamp) on every tick
             on_live_candle: Callback(symbol, timeframe, live_candle_dict) on every kline tick
+            on_reconnect: Callback(symbol) fired on WS reconnect (not initial connect)
             max_retries: Max reconnection attempts before giving up
         """
         self.symbol = symbol.upper()
@@ -103,6 +105,7 @@ class BinanceStreamManager:
         self.on_candle_close = on_candle_close
         self.on_price_update = on_price_update
         self.on_live_candle = on_live_candle
+        self.on_reconnect = on_reconnect
         self.max_retries = max_retries
 
         self._ws: websocket.WebSocketApp | None = None
@@ -209,9 +212,16 @@ class BinanceStreamManager:
 
     def _on_open(self, ws):
         """Handle successful WebSocket connection."""
+        is_reconnect = self._retry_count > 0
         self._retry_count = 0  # Reset on successful connect
-        logger.info(f"[BinanceWS] Connected for {self.symbol} — "
+        logger.info(f"[BinanceWS] {'Re-c' if is_reconnect else 'C'}onnected for {self.symbol} — "
                     f"streaming {', '.join(self.timeframes)}")
+
+        if is_reconnect and self.on_reconnect:
+            try:
+                self.on_reconnect(self.symbol)
+            except Exception as e:
+                logger.error(f"[BinanceWS] Error in on_reconnect callback: {e}")
 
     def _connect(self):
         """Create and run a new WebSocket connection."""
