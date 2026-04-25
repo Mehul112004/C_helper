@@ -233,7 +233,7 @@ class TestScanHistorical:
         strategies = [AlwaysSignalStrategy()]
 
         signals = StrategyRunner.scan_historical(
-            strategies, "BTCUSDT", "1D", df, series, []  # "1D" not in strategy
+            strategies, "BTCUSDT", "1d", df, series, []  # "1D" not in strategy
         )
 
         assert len(signals) == 0
