@@ -12,6 +12,7 @@ import type {
   RejectedSignal,
   SSEEventType,
   PriceUpdate,
+  AnalysisSession,
 } from "../../types/signals";
 import { apiClient } from "../../api/client";
 
@@ -116,6 +117,14 @@ export default function SignalFeed() {
           setConfirmedSignals((prev) => {
             if (prev.some((s) => s.id === sig.id)) return prev;
             return [sig, ...prev];
+          });
+          break;
+        }
+        case "session_started": {
+          const session = data as unknown as AnalysisSession;
+          setSessions((prev) => {
+            if (prev.some((s) => s.session_id === session.session_id)) return prev;
+            return [session, ...prev];
           });
           break;
         }

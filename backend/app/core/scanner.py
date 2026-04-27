@@ -170,21 +170,28 @@ class LiveScanner:
             )
             self._sessions[session_id] = session
 
-        # --- Cold Start Protection (runs before WebSocket connects) ---
-        if self._app:
-            with self._app.app_context():
-                self._persist_session(session)
-                self._backfill_historical_data(symbol, timeframes)
-                self._ensure_sr_zones(symbol, timeframes)
-
-        # Start the WebSocket stream (AFTER backfill is done)
-        stream.start()
-
         # Publish SSE event
         session_dict = session.to_dict()
         sse_manager.publish("session_started", session_dict)
-        logger.info(f"[LiveScanner] Session started: {session_id} for {symbol} "
-                     f"with {strategy_names} on {timeframes}")
+
+        def _background_start():
+            try:
+                # --- Cold Start Protection (runs before WebSocket connects) ---
+                if self._app:
+                    with self._app.app_context():
+                        self._persist_session(session)
+                        self._backfill_historical_data(symbol, timeframes)
+                        self._ensure_sr_zones(symbol, timeframes)
+            except Exception as e:
+                logger.error(f"[LiveScanner] Background start failed for {session_id}: {e}")
+            finally:
+                # Start the WebSocket stream (AFTER backfill is done, or even if it fails)
+                stream.start()
+                logger.info(f"[LiveScanner] Session fully started: {session_id} for {symbol} "
+                             f"with {strategy_names} on {timeframes}")
+
+        thread = threading.Thread(target=_background_start, daemon=True)
+        thread.start()
 
         return session_dict
 
@@ -426,7 +433,10 @@ class LiveScanner:
             session.live_price_updated_at = timestamp
         
         # Check against active trade limits
-        outcome_tracker.check_price(symbol, price)
+        try:
+            outcome_tracker.check_price(symbol, price)
+        except Exception as e:
+            logger.error(f"[LiveScanner] Error tracking outcome for {symbol}: {e}")
 
         sse_manager.publish("price_update", {
             "session_id": session_id,
