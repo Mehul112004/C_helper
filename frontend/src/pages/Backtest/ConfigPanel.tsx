@@ -3,7 +3,7 @@ import type { BacktestConfig } from '../../types/backtest';
 import type { StrategyInfo } from '../../api/client';
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'];
-const TIMEFRAMES = ['5m', '15m', '1h', '4h', '1D'];
+const TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d'];
 
 interface Props {
   strategies: StrategyInfo[];

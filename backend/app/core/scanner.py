@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.core.base_strategy import Candle
@@ -36,6 +36,9 @@ TIMEFRAME_MINUTES = {
     '1h': 60, '2h': 120, '4h': 240, '6h': 360, '8h': 480,
     '12h': 720, '1d': 1440, '3d': 4320, '1w': 10080,
 }
+
+# Timeframe → duration in milliseconds (for gap detection arithmetic)
+TIMEFRAME_MS = {k: v * 60 * 1000 for k, v in TIMEFRAME_MINUTES.items()}
 
 # Minimum candles needed for indicator warm-up (EMA 200 + buffer)
 MIN_BACKFILL_CANDLES = CANDLE_WARMUP
@@ -86,6 +89,7 @@ class LiveScanner:
         self._sessions: dict[str, AnalysisSession] = {}
         self._lock = threading.Lock()
         self._app = app
+        self._live_candle_throttle: dict[str, float] = {}  # key → last_emit_ts
 
     def set_app(self, app):
         """Set the Flask app reference for app context in background threads."""
@@ -152,6 +156,8 @@ class LiveScanner:
                 timeframes=timeframes,
                 on_candle_close=lambda sym, tf, data: self._on_candle_close(session_id, sym, tf, data),
                 on_price_update=lambda sym, price, ts: self._on_price_update(session_id, sym, price, ts),
+                on_live_candle=lambda sym, tf, data: self._on_live_candle(session_id, sym, tf, data),
+                on_reconnect=lambda sym: self._on_ws_reconnect(session_id, sym),
             )
 
             session = AnalysisSession(
@@ -164,21 +170,38 @@ class LiveScanner:
             )
             self._sessions[session_id] = session
 
-        # --- Cold Start Protection (runs before WebSocket connects) ---
-        if self._app:
-            with self._app.app_context():
-                self._persist_session(session)
-                self._backfill_historical_data(symbol, timeframes)
-                self._ensure_sr_zones(symbol, timeframes)
-
-        # Start the WebSocket stream (AFTER backfill is done)
-        stream.start()
-
-        # Publish SSE event
+        # Publish SSE event immediately so frontend knows session was created
         session_dict = session.to_dict()
         sse_manager.publish("session_started", session_dict)
-        logger.info(f"[LiveScanner] Session started: {session_id} for {symbol} "
-                     f"with {strategy_names} on {timeframes}")
+
+        def _background_start():
+            try:
+                logger.info(f"[LiveScanner] ── Background start: {session_id} for {symbol}")
+                # --- Cold Start Protection (runs before WebSocket connects) ---
+                if self._app:
+                    with self._app.app_context():
+                        logger.info(f"[LiveScanner]   Step 1/3: Persisting session to DB...")
+                        self._persist_session(session)
+                        logger.info(f"[LiveScanner]   Step 1/3: ✅ Session persisted.")
+
+                        logger.info(f"[LiveScanner]   Step 2/3: Backfilling historical data for {timeframes}...")
+                        self._backfill_historical_data(symbol, timeframes)
+                        logger.info(f"[LiveScanner]   Step 2/3: ✅ Backfill complete.")
+
+                        logger.info(f"[LiveScanner]   Step 3/3: Ensuring S/R zones...")
+                        self._ensure_sr_zones(symbol, timeframes)
+                        logger.info(f"[LiveScanner]   Step 3/3: ✅ S/R zones ready.")
+            except Exception as e:
+                logger.error(f"[LiveScanner] Background start failed for {session_id}: {e}")
+            finally:
+                # Start the WebSocket stream (AFTER backfill is done, or even if it fails)
+                logger.info(f"[LiveScanner]   Starting WebSocket stream for {symbol}...")
+                stream.start()
+                logger.info(f"[LiveScanner] ✅ Session fully started: {session_id} for {symbol} "
+                             f"with {strategy_names} on {timeframes}")
+
+        thread = threading.Thread(target=_background_start, daemon=True)
+        thread.start()
 
         return session_dict
 
@@ -263,12 +286,20 @@ class LiveScanner:
                 # 1. Upsert the closed candle into DB
                 self._upsert_candle(candle_data)
 
+                # 1b. Gap detection & auto-heal
+                #     Must run AFTER upsert (incoming candle is valid data)
+                #     but BEFORE indicators (they need contiguous data)
+                gap_healed = self._detect_and_heal_gap(
+                    symbol, timeframe, candle_data['open_time']
+                )
+
                 # 2. Invalidate indicator cache
+                #    Always invalidate — covers both normal and healed paths
                 IndicatorService.invalidate_cache(symbol, timeframe)
 
                 # 2b. Trigger S/R zone refresh based on candle timeframe (FIX-SR-1)
                 from app.core.sr_engine import SREngine
-                if timeframe in ('4h', '1D'):
+                if timeframe in ('4h', '1d'):
                     SREngine.full_refresh(symbol, timeframe)
                 elif timeframe in ('1h', '15m'):
                     SREngine.minor_update(symbol, timeframe)
@@ -412,7 +443,10 @@ class LiveScanner:
             session.live_price_updated_at = timestamp
         
         # Check against active trade limits
-        outcome_tracker.check_price(symbol, price)
+        try:
+            outcome_tracker.check_price(symbol, price)
+        except Exception as e:
+            logger.error(f"[LiveScanner] Error tracking outcome for {symbol}: {e}")
 
         sse_manager.publish("price_update", {
             "session_id": session_id,
@@ -421,36 +455,141 @@ class LiveScanner:
             "timestamp": timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
         })
 
+    def _on_live_candle(self, session_id: str, symbol: str, timeframe: str, candle_data: dict):
+        """
+        Handle every kline tick (open and in-progress candles).
+        Throttled to max 1 emit per 500ms per symbol/timeframe pair.
+        Always emits immediately for is_closed=True (candle finalization).
+
+        Also persists the live candle to DB every ~5s so that the chart
+        REST endpoint always includes the currently open candle.
+        """
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if not session or session.status != "active":
+                return
+
+        # Throttle: skip if we emitted less than 500ms ago (unless candle just closed)
+        throttle_key = f"{symbol}_{timeframe}"
+        now = time.time()
+        if not candle_data.get("is_closed", False):
+            last_emit = self._live_candle_throttle.get(throttle_key, 0)
+            if now - last_emit < 0.5:
+                return
+        self._live_candle_throttle[throttle_key] = now
+
+        # ── Persist live candle to DB (throttled to every ~5s) ──
+        # This ensures GET /api/data/candles always returns the open candle.
+        # Safety: uses upsert so the final closed candle always overwrites.
+        if self._app:
+            persist_key = f"db_{symbol}_{timeframe}"
+            last_persist = self._live_candle_throttle.get(persist_key, 0)
+            if now - last_persist >= 5.0 or candle_data.get("is_closed", False):
+                self._live_candle_throttle[persist_key] = now
+                try:
+                    with self._app.app_context():
+                        self._upsert_candle({
+                            'symbol': symbol,
+                            'timeframe': timeframe,
+                            'open_time': datetime.fromtimestamp(
+                                candle_data['open_time'] / 1000.0,
+                                tz=timezone.utc,
+                            ),
+                            'open': candle_data['open'],
+                            'high': candle_data['high'],
+                            'low': candle_data['low'],
+                            'close': candle_data['close'],
+                            'volume': candle_data['volume'],
+                        })
+                except Exception as e:
+                    logger.error(f"[LiveScanner] Live candle DB persist error: {e}")
+
+        sse_manager.publish("live_candle", {
+            "session_id": session_id,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "open_time": candle_data["open_time"],      # ms int
+            "close_time": candle_data["close_time"],    # ms int
+            "open": candle_data["open"],
+            "high": candle_data["high"],
+            "low": candle_data["low"],
+            "close": candle_data["close"],
+            "volume": candle_data["volume"],
+            "is_closed": candle_data["is_closed"],
+        })
+
     def _backfill_historical_data(self, symbol: str, timeframes: list[str]):
         """
-        Pre-flight data backfill: fetch historical candles via Binance REST API
-        for any timeframe that has fewer than MIN_BACKFILL_CANDLES in the DB.
+        Pre-flight data backfill: fetch historical candles via Binance REST API.
 
-        This ensures indicators (EMA 200, RSI, etc.) have enough warm-up data
-        to produce valid non-NaN values from the very first candle close.
+        Two modes:
+        1. Cold start: DB has fewer than MIN_BACKFILL_CANDLES → full historical fetch.
+        2. Top-up: DB has enough candles but may have a gap from backend downtime →
+           fetch from last stored candle to now to fill any restart gaps immediately.
+
+        This ensures indicators have warm-up data AND the chart never has holes
+        after a backend restart.
         """
-        from app.models.db import Candle as CandleModel
+        from app.models.db import Candle as CandleModel, db
 
         for tf in timeframes:
             existing_count = CandleModel.query.filter_by(
                 symbol=symbol, timeframe=tf
             ).count()
 
+            tf_minutes = TIMEFRAME_MINUTES.get(tf, 60)
+            now_ms = int(time.time() * 1000)
+
             if existing_count >= MIN_BACKFILL_CANDLES:
-                logger.info(f"[LiveScanner] Backfill skip: {symbol}/{tf} already has "
-                            f"{existing_count} candles (≥{MIN_BACKFILL_CANDLES})")
+                # ── Top-up mode: fill gap from last stored candle to now ──
+                last_candle = (
+                    CandleModel.query
+                    .filter_by(symbol=symbol, timeframe=tf)
+                    .order_by(CandleModel.open_time.desc())
+                    .first()
+                )
+                if last_candle:
+                    last_open_ms = int(last_candle.open_time.timestamp() * 1000)
+                    # Start from one candle period after the last stored candle
+                    gap_start_ms = last_open_ms + (tf_minutes * 60 * 1000)
+
+                    if gap_start_ms >= now_ms:
+                        logger.info(f"[LiveScanner] Backfill skip: {symbol}/{tf} is up-to-date "
+                                    f"({existing_count} candles)")
+                        continue
+
+                    logger.info(f"[LiveScanner] Top-up backfill: {symbol}/{tf} — "
+                                f"fetching gap from {last_candle.open_time.isoformat()} to now...")
+                    try:
+                        candles = fetch_klines(symbol, tf, gap_start_ms, now_ms)
+                        if candles:
+                            upserted = 0
+                            skipped = 0
+                            for candle_data in candles:
+                                # Guard: skip the unclosed candle Binance appends
+                                expected_close = candle_data['open_time'] + timedelta(minutes=tf_minutes)
+                                if expected_close > datetime.now(timezone.utc):
+                                    skipped += 1
+                                    continue
+                                self._upsert_candle(candle_data, commit=False)
+                                upserted += 1
+                            db.session.commit()
+                            logger.info(f"[LiveScanner] ✅ Top-up complete: {symbol}/{tf} — "
+                                        f"upserted {upserted} candles"
+                                        f"{f', skipped {skipped} unclosed' if skipped else ''}")
+                        else:
+                            logger.info(f"[LiveScanner] Top-up: no new candles for {symbol}/{tf}")
+                    except Exception as e:
+                        logger.error(f"[LiveScanner] Top-up backfill failed for {symbol}/{tf}: {e}")
                 continue
 
-            needed = MIN_BACKFILL_CANDLES - existing_count
+            # ── Cold start mode: full historical fetch ──
             logger.info(f"[LiveScanner] Backfilling {symbol}/{tf}: have {existing_count}, "
                         f"fetching ~{MIN_BACKFILL_CANDLES} candles via REST API...")
 
             try:
-                # Calculate how far back to fetch
-                tf_minutes = TIMEFRAME_MINUTES.get(tf, 60)
                 # Fetch extra to account for gaps/weekends
                 lookback_minutes = MIN_BACKFILL_CANDLES * tf_minutes * 1.2
-                now_ms = int(time.time() * 1000)
                 start_ms = now_ms - int(lookback_minutes * 60 * 1000)
 
                 candles = fetch_klines(symbol, tf, start_ms, now_ms)
@@ -461,15 +600,21 @@ class LiveScanner:
 
                 # Bulk upsert the fetched candles
                 upserted = 0
+                skipped = 0
                 for candle_data in candles:
+                    # Guard: skip the unclosed candle Binance appends
+                    expected_close = candle_data['open_time'] + timedelta(minutes=tf_minutes)
+                    if expected_close > datetime.now(timezone.utc):
+                        skipped += 1
+                        continue
                     self._upsert_candle(candle_data, commit=False)
                     upserted += 1
 
-                from app.models.db import db
                 db.session.commit()
 
                 logger.info(f"[LiveScanner] ✅ Backfill complete: {symbol}/{tf} — "
-                            f"upserted {upserted} candles")
+                            f"upserted {upserted} candles"
+                            f"{f', skipped {skipped} unclosed' if skipped else ''}")
 
             except Exception as e:
                 logger.error(f"[LiveScanner] Backfill failed for {symbol}/{tf}: {e}")
@@ -556,6 +701,112 @@ class LiveScanner:
                 db.session.rollback()
                 print(f"[LiveScanner] Candle upsert fallback error: {e}")
 
+    def _detect_and_heal_gap(
+        self, symbol: str, timeframe: str, incoming_open_time: datetime
+    ) -> bool:
+        """
+        Compare incoming candle's open_time against the last stored candle
+        for this symbol/timeframe. If a temporal gap is detected, backfill
+        the missing candles via the Binance REST API.
+
+        This is the core defence against dropped candles during WS reconnects
+        and REST-to-WS transitions. Without this, recursive indicators (EMA,
+        MACD, RSI) compute over discontinuous data and produce invalid values.
+
+        Returns:
+            True if a gap was detected and healed (caller should recalculate).
+            False if no gap — normal flow continues.
+        """
+        from app.models.db import db, Candle as CandleModel
+
+        tf_ms = TIMEFRAME_MS.get(timeframe)
+        if tf_ms is None:
+            logger.warning(
+                f"[GapDetect] Unknown timeframe '{timeframe}' — "
+                f"skipping gap detection for {symbol}"
+            )
+            return False
+
+        # Query the most recent candle BEFORE the incoming one
+        last_candle = (
+            CandleModel.query
+            .filter(
+                CandleModel.symbol == symbol,
+                CandleModel.timeframe == timeframe,
+                CandleModel.open_time < incoming_open_time,
+            )
+            .order_by(CandleModel.open_time.desc())
+            .first()
+        )
+
+        if last_candle is None:
+            # No previous candle — cold start, nothing to compare against
+            return False
+
+        # Calculate expected next candle open_time
+        expected_next_open = last_candle.open_time + timedelta(
+            milliseconds=tf_ms
+        )
+
+        # Allow 500ms tolerance for timestamp jitter
+        tolerance = timedelta(milliseconds=500)
+        if incoming_open_time <= expected_next_open + tolerance:
+            # No gap — contiguous data
+            return False
+
+        # ── Gap detected ──
+        gap_delta = incoming_open_time - expected_next_open
+        missing_candles_est = int(gap_delta.total_seconds() * 1000 / tf_ms)
+
+        logger.warning(
+            f"[GapDetect] ⚠ GAP DETECTED: {symbol}/{timeframe} — "
+            f"last_stored={last_candle.open_time.isoformat()} "
+            f"incoming={incoming_open_time.isoformat()} "
+            f"expected_next={expected_next_open.isoformat()} "
+            f"gap_delta={gap_delta} "
+            f"missing_candles≈{missing_candles_est}"
+        )
+
+        # Convert to ms timestamps for REST API
+        expected_open_ms = int(expected_next_open.timestamp() * 1000)
+        # Fetch up to (but not including) the incoming candle — it's already upserted
+        incoming_open_ms = int(incoming_open_time.timestamp() * 1000) - 1
+
+        try:
+            backfill_candles = fetch_klines(
+                symbol, timeframe, expected_open_ms, incoming_open_ms
+            )
+
+            if not backfill_candles:
+                logger.error(
+                    f"[GapHeal] REST API returned 0 candles for gap backfill "
+                    f"{symbol}/{timeframe} "
+                    f"[{expected_next_open.isoformat()} → {incoming_open_time.isoformat()}]"
+                )
+                return False
+
+            # Insert backfilled candles sequentially
+            healed_count = 0
+            for candle_data in backfill_candles:
+                self._upsert_candle(candle_data, commit=False)
+                healed_count += 1
+
+            db.session.commit()
+
+            logger.info(
+                f"[GapHeal] ✅ Gap healed: {symbol}/{timeframe} — "
+                f"backfilled {healed_count} candles "
+                f"[{expected_next_open.isoformat()} → {incoming_open_time.isoformat()}]"
+            )
+            return True
+
+        except Exception as e:
+            db.session.rollback()
+            logger.error(
+                f"[GapHeal] Backfill FAILED for {symbol}/{timeframe}: {e}"
+            )
+            return False
+
     def _persist_session(self, session: AnalysisSession):
         """Save session record to DB."""
         from app.models.db import db, AnalysisSessionRecord
@@ -617,6 +868,42 @@ class LiveScanner:
         except Exception as e:
             logger.error(f"Error fetching HTF candles for {symbol}/{timeframe} -> {htf}: {e}")
             return None
+
+    def _on_ws_reconnect(self, session_id: str, symbol: str):
+        """
+        Fired when BinanceStreamManager reconnects after a drop.
+        Immediately backfills any missing candles for all timeframes
+        in the session so gap healing doesn't wait for the next candle close.
+        Runs in a background thread to avoid blocking the WS event loop.
+        """
+        if not self._app:
+            return
+
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if not session or session.status != "active":
+                return
+            timeframes = list(session.timeframes)
+
+        def _reconnect_backfill():
+            logger.warning(
+                f"[LiveScanner] ⚡ WebSocket RECONNECTED for {symbol}. "
+                f"Triggering immediate gap backfill for {timeframes}..."
+            )
+            with self._app.app_context():
+                self._backfill_historical_data(symbol, timeframes)
+                # Invalidate indicator caches so next candle_close
+                # recomputes from the healed data
+                from app.core.indicators import IndicatorService
+                for tf in timeframes:
+                    IndicatorService.invalidate_cache(symbol, tf)
+
+            logger.info(
+                f"[LiveScanner] ✅ Reconnect backfill complete for {symbol}/{timeframes}"
+            )
+
+        thread = threading.Thread(target=_reconnect_backfill, daemon=True)
+        thread.start()
 
 
 # Module-level singleton

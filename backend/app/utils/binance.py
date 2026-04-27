@@ -1,9 +1,12 @@
 import json
+import logging
 import time
 import threading
 import requests
 import websocket
-from datetime import datetime
+from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 def fetch_klines(symbol: str, interval: str, start_time: int, end_time: int):
     """
@@ -41,7 +44,7 @@ def fetch_klines(symbol: str, interval: str, start_time: int, end_time: int):
             all_candles.append({
                 "symbol": symbol,
                 "timeframe": interval,
-                "open_time": datetime.fromtimestamp(row[0] / 1000.0),
+                "open_time": datetime.fromtimestamp(row[0] / 1000.0, tz=timezone.utc),
                 "open": float(row[1]),
                 "high": float(row[2]),
                 "low": float(row[3]),
@@ -83,6 +86,8 @@ class BinanceStreamManager:
         timeframes: list[str],
         on_candle_close=None,
         on_price_update=None,
+        on_live_candle=None,
+        on_reconnect=None,
         max_retries: int = 20,
     ):
         """
@@ -91,12 +96,16 @@ class BinanceStreamManager:
             timeframes: List of timeframe strings (e.g. ["1h", "4h"])
             on_candle_close: Callback(symbol, timeframe, candle_data_dict) on closed candles
             on_price_update: Callback(symbol, price, timestamp) on every tick
+            on_live_candle: Callback(symbol, timeframe, live_candle_dict) on every kline tick
+            on_reconnect: Callback(symbol) fired on WS reconnect (not initial connect)
             max_retries: Max reconnection attempts before giving up
         """
         self.symbol = symbol.upper()
         self.timeframes = timeframes
         self.on_candle_close = on_candle_close
         self.on_price_update = on_price_update
+        self.on_live_candle = on_live_candle
+        self.on_reconnect = on_reconnect
         self.max_retries = max_retries
 
         self._ws: websocket.WebSocketApp | None = None
@@ -132,18 +141,37 @@ class BinanceStreamManager:
 
             # Always fire price update for live ticker
             if self.on_price_update and close_price > 0:
-                tick_time = datetime.fromtimestamp(data.get("E", 0) / 1000.0)
+                tick_time = datetime.fromtimestamp(data.get("E", 0) / 1000.0, tz=timezone.utc)
                 try:
                     self.on_price_update(symbol, close_price, tick_time)
                 except Exception as e:
-                    print(f"[BinanceWS] Error in on_price_update: {e}")
+                    logger.error(f"[BinanceWS] Error in on_price_update: {e}")
+
+            # Fire live candle update on every kline tick (open or in-progress)
+            if self.on_live_candle:
+                live_candle = {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "open_time": kline.get("t", 0),       # ms
+                    "close_time": kline.get("T", 0),      # ms
+                    "open": float(kline.get("o", 0)),
+                    "high": float(kline.get("h", 0)),
+                    "low": float(kline.get("l", 0)),
+                    "close": float(kline.get("c", 0)),
+                    "volume": float(kline.get("v", 0)),
+                    "is_closed": is_closed,
+                }
+                try:
+                    self.on_live_candle(symbol, timeframe, live_candle)
+                except Exception as e:
+                    logger.error(f"[BinanceWS] Error in on_live_candle: {e}")
 
             # Only process closed candles for strategy scanning
             if is_closed and self.on_candle_close:
                 candle_data = {
                     "symbol": symbol,
                     "timeframe": timeframe,
-                    "open_time": datetime.fromtimestamp(kline.get("t", 0) / 1000.0),
+                    "open_time": datetime.fromtimestamp(kline.get("t", 0) / 1000.0, tz=timezone.utc),
                     "open": float(kline.get("o", 0)),
                     "high": float(kline.get("h", 0)),
                     "low": float(kline.get("l", 0)),
@@ -153,40 +181,47 @@ class BinanceStreamManager:
                 try:
                     self.on_candle_close(symbol, timeframe, candle_data)
                 except Exception as e:
-                    print(f"[BinanceWS] Error in on_candle_close: {e}")
+                    logger.error(f"[BinanceWS] Error in on_candle_close: {e}")
 
         except json.JSONDecodeError:
-            print(f"[BinanceWS] Failed to parse message: {message[:100]}")
+            logger.warning(f"[BinanceWS] Failed to parse message: {message[:100]}")
         except Exception as e:
-            print(f"[BinanceWS] Unexpected error in message handler: {e}")
+            logger.error(f"[BinanceWS] Unexpected error in message handler: {e}")
 
     def _on_error(self, ws, error):
         """Handle WebSocket errors."""
-        print(f"[BinanceWS] Error for {self.symbol}: {error}")
+        logger.error(f"[BinanceWS] Error for {self.symbol}: {error}")
 
     def _on_close(self, ws, close_status_code, close_msg):
         """Handle WebSocket close — attempt reconnection if still running."""
-        print(f"[BinanceWS] Connection closed for {self.symbol} "
-              f"(status={close_status_code}, msg={close_msg})")
+        logger.info(f"[BinanceWS] Connection closed for {self.symbol} "
+                    f"(status={close_status_code}, msg={close_msg})")
 
         if self._running and self._retry_count < self.max_retries:
             self._retry_count += 1
             # Exponential backoff: 1s, 2s, 4s, 8s, ... max 60s
             delay = min(2 ** (self._retry_count - 1), 60)
-            print(f"[BinanceWS] Reconnecting in {delay}s "
-                  f"(attempt {self._retry_count}/{self.max_retries})...")
+            logger.warning(f"[BinanceWS] Reconnecting in {delay}s "
+                          f"(attempt {self._retry_count}/{self.max_retries})...")
             time.sleep(delay)
             if self._running:
                 self._connect()
         elif self._retry_count >= self.max_retries:
-            print(f"[BinanceWS] Max retries ({self.max_retries}) exceeded for {self.symbol}. Giving up.")
+            logger.error(f"[BinanceWS] Max retries ({self.max_retries}) exceeded for {self.symbol}. Giving up.")
             self._running = False
 
     def _on_open(self, ws):
         """Handle successful WebSocket connection."""
+        is_reconnect = self._retry_count > 0
         self._retry_count = 0  # Reset on successful connect
-        print(f"[BinanceWS] Connected for {self.symbol} — "
-              f"streaming {', '.join(self.timeframes)}")
+        logger.info(f"[BinanceWS] {'Re-c' if is_reconnect else 'C'}onnected for {self.symbol} — "
+                    f"streaming {', '.join(self.timeframes)}")
+
+        if is_reconnect and self.on_reconnect:
+            try:
+                self.on_reconnect(self.symbol)
+            except Exception as e:
+                logger.error(f"[BinanceWS] Error in on_reconnect callback: {e}")
 
     def _connect(self):
         """Create and run a new WebSocket connection."""
@@ -205,7 +240,7 @@ class BinanceStreamManager:
         """Start the WebSocket stream in a background daemon thread."""
         with self._lock:
             if self._running:
-                print(f"[BinanceWS] Already running for {self.symbol}")
+                logger.info(f"[BinanceWS] Already running for {self.symbol}")
                 return
 
             self._running = True
@@ -216,7 +251,7 @@ class BinanceStreamManager:
                 daemon=True,
             )
             self._thread.start()
-            print(f"[BinanceWS] Started stream thread for {self.symbol}")
+            logger.info(f"[BinanceWS] Started stream thread for {self.symbol}")
 
     def stop(self):
         """Stop the WebSocket stream and clean up."""
@@ -231,7 +266,7 @@ class BinanceStreamManager:
                 except Exception:
                     pass
                 self._ws = None
-            print(f"[BinanceWS] Stopped stream for {self.symbol}")
+            logger.info(f"[BinanceWS] Stopped stream for {self.symbol}")
 
     @property
     def is_running(self) -> bool:

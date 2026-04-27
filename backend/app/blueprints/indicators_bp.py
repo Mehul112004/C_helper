@@ -17,7 +17,7 @@ def get_indicators():
 
     Query params:
         symbol (required): Trading pair, e.g. 'BTCUSDT'
-        timeframe (required): Candle timeframe, e.g. '1h', '4h', '1D'
+        timeframe (required): Candle timeframe, e.g. '1h', '4h', '1d'
         include_series (optional): If 'true', includes full indicator series for charting.
                                    Default: 'false' (returns only latest values).
 
@@ -34,7 +34,7 @@ def get_indicators():
         }), 400
 
     # Validate timeframe
-    valid_timeframes = ['5m', '15m', '1h', '4h', '1D']
+    valid_timeframes = ['5m', '15m', '1h', '4h', '1d']
     if timeframe not in valid_timeframes:
         return jsonify({
             'error': f'Invalid timeframe: {timeframe}. Valid: {valid_timeframes}'

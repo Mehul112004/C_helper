@@ -31,7 +31,7 @@ export default function Charts() {
     updateLastCandle,
   } = useChartData(symbol, timeframe, limit, showSRZones, minStrength, showEMA);
 
-  /* ─── SSE live price updates ─── */
+  /* ─── SSE live price & candle updates ─── */
   const handleSSEEvent = useCallback(
     (eventType: SSEEventType, data: Record<string, unknown>) => {
       if (eventType === 'price_update') {
@@ -42,9 +42,20 @@ export default function Charts() {
         if (evtSymbol === symbol && price) {
           updateLastCandle(price, timestamp);
         }
+      } else if (eventType === 'live_candle') {
+        const evtSymbol = data.symbol as string;
+        const evtTimeframe = data.timeframe as string;
+
+        if (evtSymbol === symbol && evtTimeframe === timeframe) {
+          // Use close price for the simple chart update path
+          const price = data.close as number;
+          if (price) {
+            updateLastCandle(price, new Date(data.open_time as number).toISOString());
+          }
+        }
       }
     },
-    [symbol, updateLastCandle],
+    [symbol, timeframe, updateLastCandle],
   );
 
   const { connected, reconnecting } = useSSE(handleSSEEvent);

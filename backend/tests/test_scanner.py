@@ -30,6 +30,9 @@ def app():
 @pytest.fixture
 def scanner(app):
     s = LiveScanner(app=app)
+    s._persist_session = MagicMock()
+    s._backfill_historical_data = MagicMock()
+    s._ensure_sr_zones = MagicMock()
     yield s
     s.stop_all()
 
@@ -67,6 +70,7 @@ class TestSessionLifecycle:
 
 
 class TestMaxSessions:
+    @patch('app.core.scanner.MAX_SESSIONS', 2)
     @patch('app.core.scanner.BinanceStreamManager')
     def test_max_sessions_enforced(self, MockStream, scanner):
         MockStream.return_value.start = MagicMock()

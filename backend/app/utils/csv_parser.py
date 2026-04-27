@@ -1,5 +1,5 @@
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 
 def parse_binance_csv(file_stream, symbol: str, timeframe: str):
     """
@@ -30,10 +30,14 @@ def parse_binance_csv(file_stream, symbol: str, timeframe: str):
             val = row['open_time']
             if isinstance(val, (int, float)):
                 # If timestamp in ms
-                open_time = datetime.fromtimestamp(val / 1000.0)
+                open_time = datetime.fromtimestamp(val / 1000.0, tz=timezone.utc)
             else:
                 # String parse (e.g., '2023-01-01 00:00:00')
-                open_time = pd.to_datetime(val).to_pydatetime()
+                dt_obj = pd.to_datetime(val).to_pydatetime()
+                if dt_obj.tzinfo is None:
+                    open_time = dt_obj.replace(tzinfo=timezone.utc)
+                else:
+                    open_time = dt_obj
                 
             all_candles.append({
                 "symbol": symbol,

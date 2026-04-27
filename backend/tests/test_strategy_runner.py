@@ -34,7 +34,7 @@ def _make_candle_list(n=50, base_close=100.0):
         for i in range(n)
     ]
 
-p
+
 class AlwaysSignalStrategy(BaseStrategy):
     """Test strategy that always returns a LONG signal."""
     name = "Always Signal"
@@ -233,7 +233,7 @@ class TestScanHistorical:
         strategies = [AlwaysSignalStrategy()]
 
         signals = StrategyRunner.scan_historical(
-            strategies, "BTCUSDT", "1D", df, series, []  # "1D" not in strategy
+            strategies, "BTCUSDT", "1d", df, series, []  # "1d" not in strategy
         )
 
         assert len(signals) == 0

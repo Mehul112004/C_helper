@@ -20,7 +20,7 @@ from app.core.config import SUPPORTED_SYMBOLS
 # Higher timeframe zones carry more weight
 TIMEFRAME_WEIGHTS = {
     '1w':  0.50,
-    '1D':  0.40,
+    '1d':  0.40,
     '12h': 0.35,
     '8h':  0.32,
     '6h':  0.30,
@@ -187,7 +187,7 @@ class SREngine:
         # Fetch recent 1D candles (enough to cover a full previous week)
         candles_1d = (
             Candle.query
-            .filter_by(symbol=symbol, timeframe='1D')
+            .filter_by(symbol=symbol, timeframe='1d')
             .order_by(Candle.open_time.desc())
             .limit(14)
             .all()

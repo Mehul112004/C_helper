@@ -294,12 +294,12 @@ class TestStrengthScoring:
             'zone_lower': 99.0,
         }
 
-        scored_1d = SREngine.score_zone(zone_1d.copy(), df, '1D')
+        scored_1d = SREngine.score_zone(zone_1d.copy(), df, '1d')
         scored_15m = SREngine.score_zone(zone_15m.copy(), df, '15m')
 
         # Same touch count but 1D has higher timeframe weight
         assert scored_1d['strength_score'] >= scored_15m['strength_score']
-        assert TIMEFRAME_WEIGHTS['1D'] > TIMEFRAME_WEIGHTS['15m']
+        assert TIMEFRAME_WEIGHTS['1d'] > TIMEFRAME_WEIGHTS['15m']
 
     def test_strength_capped_at_1(self):
         """Strength score should never exceed 1.0."""
@@ -311,7 +311,7 @@ class TestStrengthScoring:
             'zone_lower': 0.0,
         }
 
-        scored = SREngine.score_zone(zone, df, '1D')
+        scored = SREngine.score_zone(zone, df, '1d')
         assert scored['strength_score'] <= 1.0
 
     def test_touch_count_is_integer(self):
@@ -329,7 +329,7 @@ class TestStrengthScoring:
 
     def test_timeframe_weight_values(self):
         """Verify all expected timeframes have weights defined."""
-        expected_timeframes = ['1D', '4h', '1h', '15m', '5m']
+        expected_timeframes = ['1d', '4h', '1h', '15m', '5m']
         for tf in expected_timeframes:
             assert tf in TIMEFRAME_WEIGHTS
             assert 0 < TIMEFRAME_WEIGHTS[tf] <= 1.0

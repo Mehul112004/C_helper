@@ -93,6 +93,7 @@ export type SSEEventType =
   | 'session_stopped'
   | 'candle_close'
   | 'price_update'
+  | 'live_candle'
   | 'signal_confirmed';
 
 export interface SSEEvent {
