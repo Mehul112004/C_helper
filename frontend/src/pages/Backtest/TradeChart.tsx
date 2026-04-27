@@ -15,14 +15,7 @@ interface Props {
   timeframe: string;
 }
 
-interface CandleData {
-  open_time: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
+
 
 export default function TradeChart({ trades, symbol, timeframe }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -53,9 +46,6 @@ export default function TradeChart({ trades, symbol, timeframe }: Props) {
         const maxTime = new Date(Math.max(...allTimes));
 
         // Add padding (10% on each side)
-        const range = maxTime.getTime() - minTime.getTime();
-        const padStart = new Date(minTime.getTime() - range * 0.05);
-        const padEnd = new Date(maxTime.getTime() + range * 0.05);
 
         // Fetch candle data for the range
         const { data } = await apiClient.get("/data/datasets");
@@ -78,7 +68,6 @@ export default function TradeChart({ trades, symbol, timeframe }: Props) {
 
         // Fetch candles via the indicators endpoint which returns candle data
         // We'll query the raw candle data instead
-        const candleResponse = await apiClient.get("/data/datasets");
         // We need to get raw candles — let's use the candle data from the datasets
         // Since we don't have a dedicated candle-fetch endpoint for arbitrary ranges,
         // we'll construct the chart from available trade data

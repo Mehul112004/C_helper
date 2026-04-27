@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -17,6 +17,7 @@ import type {
   SRZone,
   IndicatorSeriesPoint,
 } from "../../api/client";
+import type { LiveCandleEvent } from "../../types/signals";
 
 /* ─── colour constants ─── */
 const ZONE_COLORS: Record<string, { line: string; bg: string }> = {
@@ -37,6 +38,10 @@ function toUTC(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
 }
 
+function msToUTC(ms: number): UTCTimestamp {
+  return Math.floor(ms / 1000) as UTCTimestamp;
+}
+
 /* ─── props ─── */
 interface CandleChartProps {
   candles: CandleData[];
@@ -54,9 +59,15 @@ interface CandleChartProps {
   error: string | null;
   symbol: string;
   timeframe: string;
+  liveTick: LiveCandleEvent | null;
+  closeTime: number | null;
 }
 
-export default function CandleChart({
+export interface CandleChartRef {
+  resetView: () => void;
+}
+
+const CandleChart = forwardRef<CandleChartRef, CandleChartProps>(({
   candles,
   srZones,
   showSRZones,
@@ -67,18 +78,66 @@ export default function CandleChart({
   error,
   symbol,
   timeframe,
-}: CandleChartProps) {
+  liveTick,
+  closeTime,
+}, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const emaSeriesRef = useRef<Record<string, ISeriesApi<"Line">>>({});
   const srPriceLinesRef = useRef<
-    ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]>[]
-  >([]);
+    ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]>[]>([]);
   const legendRef = useRef<HTMLDivElement>(null);
   const chartInitialized = useRef(false);
   const lastChartConfig = useRef<string>("");
+
+  /* ─── countdown timer (isolated state — no chart redraws) ─── */
+  const [countdown, setCountdown] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (closeTime == null) {
+      setCountdown(null);
+      return;
+    }
+
+    const tick = () => {
+      const diff = closeTime - Date.now();
+      if (diff <= 0) {
+        setCountdown("00:00");
+        return;
+      }
+      const totalSec = Math.floor(diff / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      if (h > 0) {
+        setCountdown(
+          `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
+        );
+      } else {
+        setCountdown(
+          `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
+        );
+      }
+    };
+
+    tick(); // immediate first tick
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [closeTime]);
+
+  /* ───────────────────── expose imperative handle ───────────────────── */
+  useImperativeHandle(ref, () => ({
+    resetView: () => {
+      if (chartRef.current) {
+        chartRef.current.timeScale().scrollToRealTime();
+        chartRef.current.priceScale("right").applyOptions({
+          autoScale: true,
+        });
+      }
+    },
+  }));
 
   /* ───────────────────── create chart instance ───────────────────── */
   const ensureChart = useCallback(() => {
@@ -201,7 +260,7 @@ export default function CandleChart({
     };
   }, []);
 
-  /* ───────────────────── update candle + volume data ───────────────────── */
+  /* ───────────────────── update candle + volume data (full setData) ───────────────────── */
   useEffect(() => {
     if (candles.length === 0) return;
 
@@ -236,6 +295,35 @@ export default function CandleChart({
       lastChartConfig.current = configKey;
     }
   }, [candles, symbol, timeframe, ensureChart]);
+
+  /* ───────────────────── live tick via .update() ───────────────────── */
+  useEffect(() => {
+    if (!liveTick) return;
+    if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
+
+    const ts = msToUTC(liveTick.open_time);
+
+    try {
+      candleSeriesRef.current.update({
+        time: ts,
+        open: liveTick.open,
+        high: liveTick.high,
+        low: liveTick.low,
+        close: liveTick.close,
+      });
+
+      volumeSeriesRef.current.update({
+        time: ts,
+        value: liveTick.volume,
+        color:
+          liveTick.close >= liveTick.open
+            ? "rgba(16, 185, 129, 0.18)"
+            : "rgba(239, 68, 68, 0.18)",
+      });
+    } catch {
+      // Stale tick from previous timeframe — ignore during transition
+    }
+  }, [liveTick]);
 
   /* ───────────────────── S/R zone price lines ───────────────────── */
   useEffect(() => {
@@ -428,9 +516,39 @@ export default function CandleChart({
         id="ohlcv-legend"
       />
 
-      {/* Overlay info badges */}
+      {/* Candle countdown timer */}
+      {countdown && (
+        <div
+          className="top-3 right-4 z-20 absolute pointer-events-none flex items-center gap-1.5"
+          id="candle-countdown"
+        >
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border font-mono text-xs font-semibold tabular-nums"
+            style={{
+              background: "rgba(15, 23, 42, 0.85)",
+              borderColor: "rgba(16, 185, 129, 0.3)",
+              color: countdown === "00:00" ? "#f59e0b" : "#10b981",
+              backdropFilter: "blur(4px)",
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ flexShrink: 0 }}>
+              <circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1.2" opacity="0.5" />
+              <path d="M5 2.5V5L6.5 6.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+            {countdown}
+          </div>
+        </div>
+      )}
+
+      {/* Overlay info badges — shifted down when countdown visible */}
       {showSRZones && srZones.length > 0 && (
-        <div className="top-3 right-4 z-10 absolute pointer-events-none">
+        <div
+          className="z-10 absolute pointer-events-none"
+          style={{
+            top: countdown ? "2.5rem" : "0.75rem",
+            right: "1rem",
+          }}
+        >
           <span className="bg-slate-800/80 px-2 py-1 border border-slate-600/40 rounded text-[10px] text-slate-400">
             {srZones.length} S/R zone{srZones.length !== 1 ? "s" : ""}
           </span>
@@ -440,8 +558,17 @@ export default function CandleChart({
       {/* EMA legend */}
       {showEMA && (
         <div
-          className="top-3 right-4 z-10 absolute flex gap-2 pointer-events-none"
-          style={showSRZones && srZones.length > 0 ? { top: "2.5rem" } : {}}
+          className="z-10 absolute flex gap-2 pointer-events-none"
+          style={{
+            top: countdown
+              ? showSRZones && srZones.length > 0
+                ? "4rem"
+                : "2.5rem"
+              : showSRZones && srZones.length > 0
+                ? "2.5rem"
+                : "0.75rem",
+            right: "1rem",
+          }}
         >
           {Object.entries(EMA_COLORS).map(([key, color]) =>
             emaVisible[key] ? (
@@ -465,4 +592,6 @@ export default function CandleChart({
       />
     </div>
   );
-}
+});
+
+export default CandleChart;

@@ -52,7 +52,6 @@ export function useSSE(onEvent: EventHandler): SSEHookReturn {
       'session_stopped',
       'candle_close',
       'price_update',
-      'live_candle',
     ];
 
     eventTypes.forEach((type) => {

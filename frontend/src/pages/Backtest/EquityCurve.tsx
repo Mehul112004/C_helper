@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { createChart, type IChartApi, type ISeriesApi, ColorType, LineType } from 'lightweight-charts';
+import { createChart, type IChartApi, type ISeriesApi, ColorType, LineType, AreaSeries } from 'lightweight-charts';
 import type { EquityCurvePoint } from '../../types/backtest';
 
 interface Props {
@@ -49,7 +49,7 @@ export default function EquityCurve({ data }: Props) {
     chartRef.current = chart;
 
     // Area series for equity curve
-    const areaSeries = chart.addAreaSeries({
+    const areaSeries = chart.addSeries(AreaSeries, {
       topColor: 'rgba(16, 185, 129, 0.35)',
       bottomColor: 'rgba(16, 185, 129, 0.02)',
       lineColor: '#10b981',
