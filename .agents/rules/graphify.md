@@ -1,5 +1,6 @@
 ---
-trigger: always_on
+trigger: model_decision
+description: When a critical piece of the software logic needs to be changed.
 ---
 
 ## graphify
