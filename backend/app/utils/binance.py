@@ -78,7 +78,7 @@ class BinanceStreamManager:
     - Thread-safe start/stop
     """
 
-    BINANCE_WS_BASE = "wss://fstream.binance.com/stream"
+    BINANCE_WS_BASE = "wss://fstream.binance.com/market/stream"
 
     def __init__(
         self,
