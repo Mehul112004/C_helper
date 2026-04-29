@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+
 import { TrendingUp, TrendingDown, Clock, AlertTriangle } from 'lucide-react';
 import type { WatchingSetup } from '../../types/signals';
 import MiniChart from './MiniChart';
@@ -7,16 +7,17 @@ interface WatchingCardProps {
   setup: WatchingSetup;
 }
 
-function timeAgo(dateStr: string): string {
-  const now = Date.now();
-  const detected = new Date(dateStr).getTime();
-  const diffMs = now - detected;
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ${mins % 60}m ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+function formatTimeIST(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  }) + ' IST';
 }
 
 function confidenceColor(c: number): string {
@@ -35,17 +36,9 @@ function confidenceBarColor(c: number): string {
  * Individual watching card showing a detected setup with live info.
  */
 export default function WatchingCard({ setup }: WatchingCardProps) {
-  const [elapsed, setElapsed] = useState(timeAgo(setup.detected_at));
   const isExpiring = setup.candles_since_detected >= setup.expiry_candles - 1;
   const isLong = setup.direction === 'LONG';
-
-  // Live-update elapsed time
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setElapsed(timeAgo(setup.detected_at));
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [setup.detected_at]);
+  const timeDisplay = formatTimeIST(setup.detected_at);
 
   return (
     <div
@@ -136,7 +129,7 @@ export default function WatchingCard({ setup }: WatchingCardProps) {
       <div className="flex items-center justify-between text-xs text-slate-400 mt-2 pt-2 border-t border-slate-700/50">
         <span className="flex items-center gap-1">
           <Clock size={11} />
-          {elapsed}
+          {timeDisplay}
         </span>
         <span className={`flex items-center gap-1 ${isExpiring ? 'text-red-400' : ''}`}>
           {isExpiring && <AlertTriangle size={11} />}

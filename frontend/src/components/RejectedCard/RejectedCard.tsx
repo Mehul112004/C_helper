@@ -6,16 +6,17 @@ interface RejectedCardProps {
   signal: RejectedSignal;
 }
 
-function timeAgo(dateStr: string): string {
-  const now = Date.now();
-  const detected = new Date(dateStr).getTime();
-  const diffMs = now - detected;
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ${mins % 60}m ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+function formatTimeIST(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  }) + ' IST';
 }
 
 export default function RejectedCard({ signal }: RejectedCardProps) {
@@ -83,7 +84,7 @@ export default function RejectedCard({ signal }: RejectedCardProps) {
       <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-700/50">
         <span className="flex items-center gap-1">
           <Clock size={11} />
-          {timeAgo(signal.created_at)}
+          {formatTimeIST(signal.created_at)}
         </span>
       </div>
     </div>

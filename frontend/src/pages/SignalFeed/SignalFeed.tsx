@@ -58,6 +58,13 @@ export default function SignalFeed() {
       .catch(() => {});
   }, []);
 
+  // Request notification permissions on load
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
   // SSE event handler
   const handleSSEEvent = useCallback(
     (eventType: SSEEventType, data: Record<string, unknown>) => {
@@ -65,6 +72,15 @@ export default function SignalFeed() {
         case "setup_detected": {
           const setup = data as unknown as WatchingSetup;
           setWatchingSetups((prev) => [setup, ...prev]);
+
+          if (
+            "Notification" in window &&
+            Notification.permission === "granted"
+          ) {
+            new Notification("New Setup Detected", {
+              body: `${setup.symbol} - ${setup.strategy} (${setup.timeframe})`,
+            });
+          }
           break;
         }
         case "setup_updated": {
@@ -123,7 +139,8 @@ export default function SignalFeed() {
         case "session_started": {
           const session = data as unknown as AnalysisSession;
           setSessions((prev) => {
-            if (prev.some((s) => s.session_id === session.session_id)) return prev;
+            if (prev.some((s) => s.session_id === session.session_id))
+              return prev;
             return [session, ...prev];
           });
           break;
