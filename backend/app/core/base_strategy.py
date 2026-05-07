@@ -10,9 +10,56 @@ Defines the universal data structures for the strategy engine:
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 import pandas as pd
+
+
+class ExecutionMode(Enum):
+    ON_CLOSE = "ON_CLOSE"
+    ON_TOUCH = "ON_TOUCH"
+    HYBRID = "HYBRID"
+
+
+@dataclass
+class ActiveZone:
+    zone_type: str
+    direction: str
+    top: float
+    bottom: float
+    midpoint: float = 0.0
+    metadata: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.midpoint == 0.0:
+            self.midpoint = (self.top + self.bottom) / 2
+
+    def contains_price(self, price: float) -> bool:
+        return self.bottom <= price <= self.top
+
+    def distance_to(self, price: float) -> float:
+        if price < self.bottom:
+            return self.bottom - price
+        elif price > self.top:
+            return price - self.top
+        return 0.0
+
+
+@dataclass
+class ContextState:
+    regime: str = "NEUTRAL"
+    active_zones: list = field(default_factory=list)
+    indicators_snapshot: dict = field(default_factory=dict)
+    last_updated: Optional[datetime] = None
+    htf_candle_count: int = 0
+
+    def clear(self):
+        self.regime = "NEUTRAL"
+        self.active_zones = []
+        self.indicators_snapshot = {}
+        self.last_updated = None
+        self.htf_candle_count = 0
 
 
 @dataclass(frozen=True)
@@ -259,6 +306,12 @@ class SetupSignal:
     notes: str = ""                     # context for LLM
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
+    # MTF metadata
+    context_tf: str = ""
+    execution_tf: str = ""
+    htf_context_summary: str = ""
+    ltf_trigger_summary: str = ""
+
     def __post_init__(self):
         if self.direction not in ("LONG", "SHORT"):
             raise ValueError(f"direction must be 'LONG' or 'SHORT', got '{self.direction}'")
@@ -267,7 +320,7 @@ class SetupSignal:
 
     def to_dict(self) -> dict:
         """Serialize to a JSON-safe dictionary."""
-        return {
+        d = {
             'strategy_name': self.strategy_name,
             'symbol': self.symbol,
             'timeframe': self.timeframe,
@@ -280,6 +333,15 @@ class SetupSignal:
             'notes': self.notes,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
         }
+        if self.context_tf:
+            d['context_tf'] = self.context_tf
+        if self.execution_tf:
+            d['execution_tf'] = self.execution_tf
+        if self.htf_context_summary:
+            d['htf_context_summary'] = self.htf_context_summary
+        if self.ltf_trigger_summary:
+            d['ltf_trigger_summary'] = self.ltf_trigger_summary
+        return d
 
 
 class BaseStrategy(ABC):
@@ -303,6 +365,19 @@ class BaseStrategy(ABC):
     version: str = "1.0"
     min_confidence: float = 0.5     # Configurable per strategy; session/runner can override
 
+    # MTF configuration
+    execution_mode: ExecutionMode = ExecutionMode.ON_CLOSE
+    context_tf: str = ""
+    execution_tf: str = ""
+
+    def __init__(self):
+        self._context_state = ContextState()
+
+    @property
+    def context(self) -> ContextState:
+        """Access the cached HTF context state."""
+        return self._context_state
+
     @abstractmethod
     def scan(
         self,
@@ -325,6 +400,29 @@ class BaseStrategy(ABC):
             sr_zones: S/R zones near current price from SREngine
         """
         ...
+
+    def update_context(
+        self,
+        symbol: str,
+        htf_candles: list,
+        htf_indicators: 'Indicators',
+        sr_zones: list[dict],
+    ) -> None:
+        pass
+
+    def evaluate_trigger(
+        self,
+        symbol: str,
+        timeframe: str,
+        ltf_candles: list,
+        ltf_indicators: Optional['Indicators'],
+        current_price: float,
+    ) -> Optional['SetupSignal']:
+        return None
+
+    def has_mtf_support(self) -> bool:
+        """True if this strategy has been migrated to the MTF system."""
+        return bool(self.context_tf and self.execution_tf)
 
     def calculate_sl(self, signal: SetupSignal, candles: list[Candle], atr: float) -> float:
         """

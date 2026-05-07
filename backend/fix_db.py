@@ -18,6 +18,9 @@ migrations = [
     ("telegram_status", "ALTER TABLE confirmed_signals ADD COLUMN telegram_status VARCHAR(20) DEFAULT 'PENDING';"),
     ("telegram_retries", "ALTER TABLE confirmed_signals ADD COLUMN telegram_retries INTEGER DEFAULT 0;"),
     ("telegram_message_id", "ALTER TABLE confirmed_signals ADD COLUMN telegram_message_id VARCHAR(50);"),
+    ("strategies.execution_mode", "ALTER TABLE strategies ADD COLUMN execution_mode VARCHAR(20) DEFAULT 'ON_CLOSE';"),
+    ("strategies.context_tf", "ALTER TABLE strategies ADD COLUMN context_tf VARCHAR(10);"),
+    ("backtest_runs.engine_version", "ALTER TABLE backtest_runs ADD COLUMN engine_version VARCHAR(10) DEFAULT '1.0';"),
 ]
 
 for col_name, sql in migrations:

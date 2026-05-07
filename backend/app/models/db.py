@@ -81,6 +81,8 @@ class Strategy(db.Model):
     timeframes = db.Column(db.Text, nullable=False)                         # JSON array: '["1h", "4h"]'
     enabled = db.Column(db.Boolean, default=True)
     min_confidence = db.Column(db.Float, default=0.5)                       # configurable threshold
+    execution_mode = db.Column(db.String(20), default='ON_CLOSE')           # ExecutionMode enum value
+    context_tf = db.Column(db.String(10), nullable=True)                    # HTF for context computation
     code = db.Column(db.Text, nullable=True)                                # Python source (custom only)
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
     updated_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now())
@@ -95,6 +97,8 @@ class Strategy(db.Model):
             'timeframes': json.loads(self.timeframes) if self.timeframes else [],
             'enabled': self.enabled,
             'min_confidence': self.min_confidence,
+            'execution_mode': self.execution_mode,
+            'context_tf': self.context_tf,
             'has_code': self.code is not None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -311,6 +315,7 @@ class BacktestRun(db.Model):
     worst_trade_pnl = db.Column(db.Float)
 
     status = db.Column(db.String(20), default='RUNNING')         # RUNNING / COMPLETED / FAILED
+    engine_version = db.Column(db.String(10), default='1.0')     # backtest engine version
     error_message = db.Column(db.Text, nullable=True)
     equity_curve = db.Column(db.Text, nullable=True)             # JSON array of {time, value}
 
@@ -345,6 +350,7 @@ class BacktestRun(db.Model):
             'best_trade_pnl': self.best_trade_pnl,
             'worst_trade_pnl': self.worst_trade_pnl,
             'status': self.status,
+            'engine_version': self.engine_version,
             'error_message': self.error_message,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
