@@ -101,6 +101,67 @@ class StrategyRunner:
             print(f"[StrategyRunner] Error in {strategy.name}: {e}")
             return None
 
+    @staticmethod
+    def run_mtf_scan(
+        strategy: BaseStrategy,
+        symbol: str,
+        timeframe: str,
+        ltf_candles: list[Candle],
+        ltf_indicators: Indicators,
+        current_price: float,
+        min_confidence_override: Optional[float] = None,
+    ) -> Optional[SetupSignal]:
+        """
+        Execute a single MTF trigger evaluation with safety wrapping.
+
+        Calls strategy.evaluate_trigger() (not scan()) so strategies that
+        have been migrated to the MTF system use their cached HTF context.
+
+        Same safety wrapping as run_single_scan():
+        - Exception handling
+        - Confidence filter
+        - SL/TP default population
+        - Tags context_tf / execution_tf on the signal
+
+        Returns:
+            A fully populated SetupSignal or None
+        """
+        try:
+            signal = strategy.evaluate_trigger(
+                symbol, timeframe, ltf_candles, ltf_indicators, current_price
+            )
+
+            if signal is None:
+                return None
+
+            threshold = min_confidence_override if min_confidence_override is not None else strategy.min_confidence
+            if signal.confidence < threshold:
+                return None
+
+            signal.context_tf = signal.context_tf or strategy.context_tf
+            signal.execution_tf = signal.execution_tf or strategy.execution_tf
+
+            atr = ltf_indicators.atr_14 if ltf_indicators.atr_14 is not None else 0.0
+
+            if signal.entry is None:
+                signal.entry = current_price
+
+            if signal.sl is None and atr > 0:
+                signal.sl = strategy.calculate_sl(signal, ltf_candles, atr)
+
+            if (signal.tp1 is None or signal.tp2 is None) and atr > 0:
+                tp1, tp2 = strategy.calculate_tp(signal, ltf_candles, atr)
+                if signal.tp1 is None:
+                    signal.tp1 = tp1
+                if signal.tp2 is None:
+                    signal.tp2 = tp2
+
+            return signal
+
+        except Exception as e:
+            print(f"[StrategyRunner] Error in MTF {strategy.name}: {e}")
+            return None
+
     @classmethod
     def scan_historical(
         cls,
