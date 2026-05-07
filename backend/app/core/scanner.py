@@ -20,11 +20,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from app.core.base_strategy import Candle
+from app.core.base_strategy import Candle, ExecutionMode
 from app.core.sse import sse_manager
 from app.core.strategy_runner import StrategyRunner
 from app.core.watching import WatchingManager
 from app.core.outcome_tracker import outcome_tracker
+from app.core.zone_manager import zone_manager
 from app.utils.binance import BinanceStreamManager, fetch_klines
 from app.core.config import CANDLE_WARMUP
 
@@ -229,6 +230,8 @@ class LiveScanner:
                 self._update_session_status(session_id, "stopped")
                 print(f"[LiveScanner] Expired {expired_count} setups for session {session_id}")
 
+        zone_manager.invalidate_symbol(session.symbol)
+
         with self._lock:
             session.status = "stopped"
 
@@ -276,8 +279,6 @@ class LiveScanner:
             from app.core.indicators import IndicatorService
             from app.models.db import SRZone, Candle as CandleModel
             from app.core.strategy_loader import registry
-            from app.core.telegram_queue import telegram_queue
-            from app.core.llm_queue import llm_queue
 
             try:
                 print(f"[LiveScanner] ── Candle close: {symbol}/{timeframe} "
@@ -366,48 +367,77 @@ class LiveScanner:
                 print(f"[LiveScanner]    Indicators ({candle_count} candles): {', '.join(ind_status)}")
                 print(f"[LiveScanner]    S/R zones in range: {len(sr_zones)}")
 
-                # 6. Fetch HTF context
+                # 6. Fetch HTF context (for legacy LLM prompt enrichment)
                 htf_candles = self._fetch_htf_candles(symbol, timeframe)
 
-                # 7. Run strategies
+                # 7. Run strategies — MTF-aware routing
                 signals_found = 0
                 for strat_name in session.strategy_names:
                     strategy = registry.get_by_name(strat_name)
                     if not strategy:
                         continue
-                    if timeframe not in strategy.timeframes:
-                        continue
 
-                    signal = StrategyRunner.run_single_scan(
-                        strategy=strategy,
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        candles=candle_objects,
-                        indicators=indicators,
-                        sr_zones=sr_zones,
-                        htf_candles=htf_candles,
-                    )
+                    # --- MTF Context Update ---
+                    if strategy.has_mtf_support() and timeframe == strategy.context_tf:
+                        htf_candles_for_ctx = self._fetch_candles_for_tf(symbol, strategy.context_tf, limit=50)
+                        htf_ind = self._compute_indicators_for_tf(symbol, strategy.context_tf)
+                        if htf_candles_for_ctx and htf_ind:
+                            strategy.update_context(symbol, htf_candles_for_ctx, htf_ind, sr_zones)
+                            zone_manager.update(symbol, strat_name, strategy.context)
+                            print(f"[LiveScanner]    🔄 Context updated: {strat_name} "
+                                  f"regime={strategy.context.regime} zones={len(strategy.context.active_zones)}")
 
-                    if signal:
-                        signals_found += 1
-                        print(f"[LiveScanner]    ✅ SIGNAL: {strat_name} → {signal.direction} "
-                              f"conf={signal.confidence:.2f}")
-                        setup_dict, is_new = WatchingManager.create_or_update_setup(session_id, signal)
-                        event_type = "setup_detected" if is_new else "setup_updated"
-                        sse_manager.publish(event_type, setup_dict)
+                    # --- Execution routing by mode ---
+                    if strategy.has_mtf_support():
+                        exec_tf = strategy.execution_tf
+                        if strategy.execution_mode == ExecutionMode.ON_CLOSE and timeframe == exec_tf:
+                            signal = StrategyRunner.run_mtf_scan(
+                                strategy, symbol, timeframe,
+                                candle_objects, indicators, current_price,
+                            )
+                            if signal:
+                                signals_found += 1
+                                print(f"[LiveScanner]    ✅ MTF SIGNAL: {strat_name} → {signal.direction} "
+                                      f"conf={signal.confidence:.2f}")
+                                self._handle_signal(session_id, signal, strategy,
+                                                    candle_objects, indicators, sr_zones)
 
-                        if is_new:
-                            telegram_queue.enqueue_watching_alert(setup_dict['id'])
-                            
-                            if hasattr(strategy, 'should_confirm_with_llm') and strategy.should_confirm_with_llm(signal):
-                                llm_queue.enqueue_signal(
-                                    watching_setup_id=setup_dict['id'],
-                                    signal=signal,
-                                    candles=candle_objects,
-                                    indicators=indicators,
-                                    sr_zones=sr_zones,
-                                    htf_candles=htf_candles
+                        elif strategy.execution_mode == ExecutionMode.HYBRID and timeframe == exec_tf:
+                            if zone_manager.is_price_near_zone(symbol, strat_name, current_price):
+                                signal = StrategyRunner.run_mtf_scan(
+                                    strategy, symbol, timeframe,
+                                    candle_objects, indicators, current_price,
                                 )
+                                if signal:
+                                    signals_found += 1
+                                    print(f"[LiveScanner]    ✅ MTF HYBRID SIGNAL: {strat_name} → {signal.direction} "
+                                          f"conf={signal.confidence:.2f}")
+                                    self._handle_signal(session_id, signal, strategy,
+                                                        candle_objects, indicators, sr_zones)
+
+                        # ON_TOUCH: handled in _on_price_update()
+
+                    else:
+                        # --- LEGACY PATH ---
+                        if timeframe not in strategy.timeframes:
+                            continue
+
+                        signal = StrategyRunner.run_single_scan(
+                            strategy=strategy,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            candles=candle_objects,
+                            indicators=indicators,
+                            sr_zones=sr_zones,
+                            htf_candles=htf_candles,
+                        )
+
+                        if signal:
+                            signals_found += 1
+                            print(f"[LiveScanner]    ✅ SIGNAL: {strat_name} → {signal.direction} "
+                                  f"conf={signal.confidence:.2f}")
+                            self._handle_signal(session_id, signal, strategy,
+                                                candle_objects, indicators, sr_zones, htf_candles)
 
                 if signals_found == 0:
                     strats_checked = [s for s in session.strategy_names
@@ -454,6 +484,33 @@ class LiveScanner:
             "price": price,
             "timestamp": timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
         })
+
+        # --- ON_TOUCH evaluation ---
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if not session or session.status != "active":
+                return
+
+        from app.core.strategy_loader import registry
+
+        for strat_name in session.strategy_names:
+            strategy = registry.get_by_name(strat_name)
+            if not strategy or strategy.execution_mode != ExecutionMode.ON_TOUCH:
+                continue
+            if not zone_manager.is_price_near_zone(symbol, strat_name, price):
+                continue
+
+            throttle_key = f"touch_{symbol}_{strat_name}"
+            now = time.time()
+            if now - self._live_candle_throttle.get(throttle_key, 0) < 0.5:
+                continue
+            self._live_candle_throttle[throttle_key] = now
+
+            signal = strategy.evaluate_trigger(symbol, strategy.execution_tf, [], None, price)
+            if signal:
+                if self._app:
+                    with self._app.app_context():
+                        self._handle_signal(session_id, signal, strategy, [], None, [])
 
     def _on_live_candle(self, session_id: str, symbol: str, timeframe: str, candle_data: dict):
         """
@@ -868,6 +925,50 @@ class LiveScanner:
         except Exception as e:
             logger.error(f"Error fetching HTF candles for {symbol}/{timeframe} -> {htf}: {e}")
             return None
+
+    def _handle_signal(self, session_id, signal, strategy, candle_objects, indicators, sr_zones, htf_candles=None):
+        """Unified signal handler — WatchingManager, SSE, Telegram, LLM queue."""
+        from app.core.telegram_queue import telegram_queue
+        from app.core.llm_queue import llm_queue
+
+        setup_dict, is_new = WatchingManager.create_or_update_setup(session_id, signal)
+        event_type = "setup_detected" if is_new else "setup_updated"
+        sse_manager.publish(event_type, setup_dict)
+
+        if is_new:
+            telegram_queue.enqueue_watching_alert(setup_dict['id'])
+            if hasattr(strategy, 'should_confirm_with_llm') and strategy.should_confirm_with_llm(signal):
+                llm_queue.enqueue_signal(
+                    watching_setup_id=setup_dict['id'],
+                    signal=signal,
+                    candles=candle_objects,
+                    indicators=indicators,
+                    sr_zones=sr_zones,
+                    htf_candles=htf_candles,
+                )
+
+    def _fetch_candles_for_tf(self, symbol, timeframe, limit=50):
+        """Fetch candles from DB for a specific timeframe."""
+        from app.models.db import Candle as CandleModel
+        db_candles = (CandleModel.query
+            .filter_by(symbol=symbol, timeframe=timeframe)
+            .order_by(CandleModel.open_time.desc())
+            .limit(limit).all())
+        if not db_candles:
+            return None
+        return [Candle.from_db_row(c.to_dict()) for c in reversed(db_candles)]
+
+    def _compute_indicators_for_tf(self, symbol, timeframe):
+        """Compute indicators for a specific timeframe."""
+        from app.core.indicators import IndicatorService
+        result = IndicatorService.compute_all(symbol, timeframe, include_series=True)
+        if not result.get('latest'):
+            return None
+        series = result.get('series', {})
+        count = result.get('candle_count', 0)
+        if count > 0 and series:
+            return StrategyRunner.prepare_indicators_snapshot(series, count - 1)
+        return None
 
     def _on_ws_reconnect(self, session_id: str, symbol: str):
         """
