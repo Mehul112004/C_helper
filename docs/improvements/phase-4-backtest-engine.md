@@ -113,9 +113,62 @@ At each bar in the walk:
 
 ## Verification
 
-- [ ] `merge_htf_context()` produces a DataFrame with `htf_*` columns
-- [ ] At LTF bar T, the `htf_ema_50` value corresponds to the HTF candle that CLOSED before T (not the one containing T)
-- [ ] A simple test: create a 4-bar HTF series with values [10, 20, 30, 40]. Merge with 16-bar LTF series. Verify first 4 LTF bars see `NaN` (shifted), bars 5-8 see `10`, bars 9-12 see `20`, etc.
-- [ ] Backtest with `context_timeframe=None` produces identical results to before (legacy path)
-- [ ] `engine_version` is `'2.0'` for MTF backtests, `'1.0'` for legacy
-- [ ] All existing backtest tests pass unchanged
+- [x] `merge_htf_context()` produces a DataFrame with `htf_*` columns
+- [x] At LTF bar T, the `htf_ema_50` value corresponds to the HTF candle that CLOSED before T (not the one containing T)
+- [x] A simple test: create a 4-bar HTF series with values [10, 20, 30, 40]. Merge with 16-bar LTF series. Verify first 4 LTF bars see `NaN` (shifted), bars 5-8 see `10`, bars 9-12 see `20`, etc.
+- [x] Backtest with `context_timeframe=None` produces identical results to before (legacy path)
+- [x] `engine_version` is `'2.0'` for MTF backtests, `'1.0'` for legacy
+- [x] All existing backtest tests pass unchanged
+
+---
+
+## Walkthrough of Changes
+
+### `backend/app/core/backtest_engine.py`
+
+**New static methods added:**
+
+1. **`merge_htf_context(ltf_df, htf_df)`** — Merges HTF indicator values into the LTF DataFrame with lookahead bias prevention. The critical mechanism is `shift(1)` applied *before* `ffill()`, which ensures that at any LTF timestamp, only indicators from **completed** HTF candles are visible. The merged result has `htf_ema_50`, `htf_ema_200`, `htf_rsi_14`, `htf_macd_histogram`, and `htf_atr_14` columns appended to the LTF DataFrame.
+
+2. **`_htf_candle_boundaries(ltf_df, htf_df)`** — Returns a `set[int]` of LTF bar indices where a new HTF candle opens (meaning the previous HTF candle just closed). These indices are used to trigger `strategy.update_context()` calls during the bar-by-bar historical walk.
+
+**Modified method:**
+
+3. **`run()`** — Added optional `context_timeframe` parameter. When provided:
+   - Fetches HTF candles from the database for the same date range
+   - Computes HTF indicators via `compute_indicators_from_df()`
+   - Calls `merge_htf_context()` to produce the lookahead-safe merged DataFrame
+   - Calls `_htf_candle_boundaries()` to determine context update points
+   - Passes all MTF data (`htf_candle_df`, `htf_indicator_series`, `htf_boundaries`) to `StrategyRunner.scan_historical()`
+   - Sets `engine_version = '2.0'` on the `BacktestRun` record (vs `'1.0'` for legacy)
+
+### `backend/app/core/strategy_runner.py`
+
+**Modified method:**
+
+4. **`scan_historical()`** — Extended with three optional MTF parameters:
+   - `htf_candle_df` — HTF candle DataFrame for context updates
+   - `htf_indicator_series` — HTF indicator series dict
+   - `htf_boundaries` — Set of LTF bar indices where HTF context should be updated
+
+   At each bar in the walk:
+   - If the current bar index is in `htf_boundaries`, all MTF-capable strategies receive an `update_context()` call with the HTF candles and indicators available up to the **just-completed** HTF candle (indexed via `htf_close_map`).
+   - **MTF strategies** (those with `has_mtf_support() == True`) are routed through `run_mtf_scan()` which calls `evaluate_trigger()` using the cached HTF context.
+   - **Legacy strategies** continue through `run_single_scan()` which calls `scan()` — behavior is unchanged.
+
+### Lookahead Prevention Flow
+
+```
+HTF candles:  [09:00]  [10:00]  [11:00]  [12:00]
+LTF bars:     [..., 10:00, 10:15, ..., 11:00, 11:15, ...]
+
+At LTF bar 10:00:
+  → htf_boundaries contains this index (new HTF candle opened)
+  → update_context() is called with HTF data up to 09:00 candle only
+  → merge_htf_context's shift(1) ensures htf_ema_50 at 10:00 = value from 09:00 candle
+
+At LTF bar 10:15:
+  → NOT a boundary → no context update
+  → HTF context remains stale (09:00 candle data)
+  → htf_ema_50 is ffill'd forward from the 09:00 candle value
+```

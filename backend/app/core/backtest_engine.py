@@ -95,6 +95,51 @@ class BacktestEngine:
             'volume_ma_20': _series_to_list(vol_ma_20),
         }
 
+    # ---------- MTF Context Merging ----------
+
+    @staticmethod
+    def merge_htf_context(ltf_df: pd.DataFrame, htf_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Merge HTF indicator data into LTF DataFrame with lookahead prevention.
+
+        The critical operation is shift(1) BEFORE ffill():
+        - At 10:15 on the 5m chart, you can NOT see the 10:00-11:00 1H candle's close
+        - shift(1) ensures the 10:15 bar only sees the COMPLETED 09:00-10:00 candle
+        - ffill() carries the last completed HTF values forward to all LTF bars
+
+        Returns: LTF DataFrame with htf_* prefixed columns added.
+        """
+        htf_indicators = BacktestEngine.compute_indicators_from_df(htf_df)
+
+        htf_ind_df = pd.DataFrame({'open_time': htf_df['open_time']})
+        for key in ['ema_50', 'ema_200', 'rsi_14', 'macd_histogram', 'atr_14']:
+            if key in htf_indicators:
+                htf_ind_df[f'htf_{key}'] = [v['value'] for v in htf_indicators[key]]
+        htf_ind_df = htf_ind_df.set_index('open_time')
+
+        htf_ind_df = htf_ind_df.shift(1)
+
+        ltf_times = pd.DatetimeIndex(ltf_df['open_time'])
+        htf_aligned = htf_ind_df.reindex(ltf_times, method='ffill')
+
+        result = ltf_df.copy()
+        for col in htf_aligned.columns:
+            result[col] = htf_aligned[col].values
+        return result
+
+    @staticmethod
+    def _htf_candle_boundaries(ltf_df: pd.DataFrame, htf_df: pd.DataFrame) -> set:
+        """
+        Return set of LTF bar indices where a new HTF candle just closed.
+        Used to trigger update_context() during historical walk.
+        """
+        htf_close_times = set(htf_df['open_time'].values)
+        boundaries = set()
+        for idx, row in ltf_df.iterrows():
+            if row['open_time'] in htf_close_times:
+                boundaries.add(idx)
+        return boundaries
+
     # ---------- Trade Simulation (Vectorized) ----------
 
     @staticmethod
@@ -432,6 +477,7 @@ class BacktestEngine:
         strategy_names: list[str],
         initial_capital: float = 10000.0,
         risk_pct: float = 0.01,
+        context_timeframe: str = None,
     ) -> dict:
         """
         Execute a full backtest.
@@ -445,11 +491,15 @@ class BacktestEngine:
             strategy_names: List of strategy name strings (for DB record)
             initial_capital: Starting capital in USD
             risk_pct: Fraction of capital risked per trade
+            context_timeframe: Optional HTF for MTF strategies (e.g. "4h").
+                When provided, HTF candles are fetched, context is merged
+                with lookahead prevention, and engine_version is set to '2.0'.
 
         Returns:
             Dict containing run_id, status, metrics, equity_curve, trades, etc.
         """
         run_id = str(uuid.uuid4())
+        is_mtf_run = context_timeframe is not None
 
         # Create the run record
         run_record = BacktestRun(
@@ -462,6 +512,7 @@ class BacktestEngine:
             initial_capital=initial_capital,
             risk_per_trade=risk_pct,
             status='RUNNING',
+            engine_version='2.0' if is_mtf_run else '1.0',
         )
         db.session.add(run_record)
         db.session.commit()
@@ -490,6 +541,37 @@ class BacktestEngine:
 
             # 2. Compute indicators across full dataset (vectorized)
             indicator_series = cls.compute_indicators_from_df(candle_df)
+
+            # 2.5. MTF context loading (if context_timeframe provided)
+            htf_candle_df = None
+            htf_indicator_series = None
+            htf_boundaries = None
+
+            if is_mtf_run:
+                htf_candles_db = (
+                    Candle.query
+                    .filter_by(symbol=symbol, timeframe=context_timeframe)
+                    .filter(Candle.open_time >= start_date)
+                    .filter(Candle.open_time <= end_date)
+                    .order_by(Candle.open_time.asc())
+                    .all()
+                )
+
+                if len(htf_candles_db) < 50:
+                    raise ValueError(
+                        f"Insufficient HTF candle data: {len(htf_candles_db)} candles "
+                        f"for {context_timeframe} (need at least 50)"
+                    )
+
+                htf_data = [c.to_dict() for c in htf_candles_db]
+                htf_candle_df = pd.DataFrame(htf_data)
+                htf_candle_df['open_time'] = pd.to_datetime(htf_candle_df['open_time'])
+                htf_candle_df = htf_candle_df.sort_values('open_time').reset_index(drop=True)
+
+                htf_indicator_series = cls.compute_indicators_from_df(htf_candle_df)
+                htf_boundaries = cls._htf_candle_boundaries(candle_df, htf_candle_df)
+
+                candle_df = cls.merge_htf_context(candle_df, htf_candle_df)
 
             # 3. Detect S/R zones from the dataset
             atr_series = IndicatorService.compute_atr(
@@ -533,6 +615,9 @@ class BacktestEngine:
                 candle_df=candle_df,
                 indicator_series=indicator_series,
                 sr_zones=sr_zones,
+                htf_candle_df=htf_candle_df,
+                htf_indicator_series=htf_indicator_series,
+                htf_boundaries=htf_boundaries,
             )
 
             # 5. Simulate trades

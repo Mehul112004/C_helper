@@ -172,12 +172,21 @@ class StrategyRunner:
         indicator_series: dict,
         sr_zones: list[dict],
         min_confidence_override: Optional[float] = None,
+        htf_candle_df: pd.DataFrame = None,
+        htf_indicator_series: dict = None,
+        htf_boundaries: set = None,
     ) -> list[SetupSignal]:
         """
         Walk through a historical candle dataset bar-by-bar, running all
         applicable strategies at each bar close. Returns all signals generated.
 
         Used for testing and backtesting.
+
+        MTF support: When htf_candle_df, htf_indicator_series, and htf_boundaries
+        are provided, HTF context is updated at each HTF candle boundary with
+        lookahead prevention, and MTF strategies are routed through
+        run_mtf_scan() (calls evaluate_trigger) instead of run_single_scan()
+        (calls scan).
 
         Args:
             strategies: List of strategy instances to run
@@ -187,6 +196,9 @@ class StrategyRunner:
             indicator_series: Full indicator series dict from IndicatorService.compute_all()
             sr_zones: S/R zones for this symbol (applied uniformly to all bars)
             min_confidence_override: Optional per-session confidence threshold
+            htf_candle_df: Optional HTF candle DataFrame for MTF context updates
+            htf_indicator_series: Optional HTF indicator series for MTF context
+            htf_boundaries: Optional set of LTF bar indices where HTF context should update
 
         Returns:
             List of all SetupSignal objects generated across the walk
@@ -195,6 +207,19 @@ class StrategyRunner:
 
         # Convert DataFrame rows to Candle objects
         candle_objects = [Candle.from_df_row(row) for _, row in candle_df.iterrows()]
+
+        # Build HTF candle objects and a LTF-index → HTF-index mapping for boundary lookups
+        htf_candle_objects = None
+        htf_close_map = {}
+        if htf_candle_df is not None and htf_boundaries is not None:
+            htf_candle_objects = [Candle.from_df_row(row) for _, row in htf_candle_df.iterrows()]
+            htf_times = htf_candle_df['open_time'].values
+            for boundary_idx in htf_boundaries:
+                ltf_time = candle_df.iloc[boundary_idx]['open_time']
+                for htf_idx, htf_time in enumerate(htf_times):
+                    if htf_time == ltf_time and htf_idx > 0:
+                        htf_close_map[boundary_idx] = htf_idx - 1
+                        break
 
         MIN_HISTORY_CANDLES = 50
         start_idx = MIN_HISTORY_CANDLES
@@ -207,20 +232,46 @@ class StrategyRunner:
             # Build indicators snapshot for this bar
             indicators = cls.prepare_indicators_snapshot(indicator_series, idx)
 
+            # HTF context update at boundaries
+            if htf_boundaries is not None and idx in htf_boundaries:
+                for strategy in strategies:
+                    if strategy.has_mtf_support() and htf_candle_objects is not None:
+                        htf_candle_idx = htf_close_map.get(idx, -1)
+                        if htf_candle_idx < 0:
+                            continue
+                        htf_window = htf_candle_objects[:htf_candle_idx + 1]
+                        htf_indicators = cls.prepare_indicators_snapshot(
+                            htf_indicator_series, htf_candle_idx
+                        )
+                        strategy.update_context(
+                            symbol, htf_window, htf_indicators, sr_zones
+                        )
+
             for strategy in strategies:
                 # Skip strategies that don't operate on this timeframe
                 if timeframe not in strategy.timeframes:
                     continue
 
-                signal = cls.run_single_scan(
-                    strategy=strategy,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    candles=window,
-                    indicators=indicators,
-                    sr_zones=sr_zones,
-                    min_confidence_override=min_confidence_override,
-                )
+                if strategy.has_mtf_support():
+                    signal = cls.run_mtf_scan(
+                        strategy=strategy,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        ltf_candles=window,
+                        ltf_indicators=indicators,
+                        current_price=candle_objects[idx].close,
+                        min_confidence_override=min_confidence_override,
+                    )
+                else:
+                    signal = cls.run_single_scan(
+                        strategy=strategy,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        candles=window,
+                        indicators=indicators,
+                        sr_zones=sr_zones,
+                        min_confidence_override=min_confidence_override,
+                    )
 
                 if signal:
                     # Override timestamp to the bar's time (not current wall time)
