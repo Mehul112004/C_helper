@@ -112,10 +112,77 @@ Migrate one at a time. After each, verify:
 
 ## Verification
 
-- [ ] Each strategy instantiates without error
-- [ ] `strategy.execution_mode == ExecutionMode.ON_CLOSE` for all 5
-- [ ] `strategy.has_mtf_support()` returns True for all 5
-- [ ] `update_context()` correctly sets regime from HTF data
-- [ ] `evaluate_trigger()` fires only when direction matches HTF regime
-- [ ] Legacy `scan()` path unchanged — can still be called directly
-- [ ] Backtest with legacy path produces identical results to pre-migration
+- [x] Each strategy instantiates without error
+- [x] `strategy.execution_mode == ExecutionMode.ON_CLOSE` for all 5
+- [x] `strategy.has_mtf_support()` returns True for all 5
+- [x] `update_context()` correctly sets regime from HTF data
+- [x] `evaluate_trigger()` fires only when direction matches HTF regime
+- [x] Legacy `scan()` path unchanged — can still be called directly
+- [x] Backtest with legacy path produces identical results to pre-migration
+
+---
+
+## Walkthrough of Changes
+
+### Migration Pattern (all 5 strategies)
+
+Each strategy received the same 3 structural additions. The existing `scan()` method and helper methods (`calculate_sl`, `calculate_tp`, etc.) were left untouched.
+
+### 1. Class Attributes (MTF Configuration)
+
+Each strategy now declares three new class-level attributes that plug it into the MTF system:
+
+```python
+execution_mode = ExecutionMode.ON_CLOSE  # Only fire on LTF candle close
+context_tf = "4h"                        # HTF used for trend/regime context
+execution_tf = "15m"                     # LTF used for trigger detection
+```
+
+| Strategy | `context_tf` | `execution_tf` |
+|----------|-------------|---------------|
+| EMA Crossover | `4h` | `15m` |
+| MACD Momentum | `1h` | `15m` |
+| RSI Reversal | `4h` | `15m` |
+| Bollinger Squeeze | `1h` | `15m` |
+| Volume Climax | `1h` | `1h` |
+
+Volume Climax uses `1h` for both since volume climax is inherently an HTF pattern — the evaluation delegates through to the same `scan()` logic since both TFs match.
+
+### 2. `update_context()` — HTF Regime Detection
+
+Called by the engine at each HTF candle boundary (via `Phase 4` mechanics). Each strategy computes its own HTF regime:
+
+- **EMA Crossover**: Compares EMA50 vs EMA200 on 4H → sets `BULLISH` or `BEARISH`
+- **MACD Momentum**: Checks MACD histogram on 1H → positive = `BULLISH`, negative = `BEARISH`
+- **RSI Reversal**: Checks RSI on 4H → <35 = `OVERSOLD`, >65 = `OVERBOUGHT`, else `NEUTRAL`
+- **Bollinger Squeeze**: Uses `_is_squeeze()` on 1H BB/KC → `SQUEEZE` or `NO_SQUEEZE`
+- **Volume Climax**: Compares EMA50 vs EMA200 on 1H → `BULLISH` or `BEARISH`
+
+Results are cached in `self._context_state`: `regime`, `indicators_snapshot`, `last_updated`.
+
+### 3. `evaluate_trigger()` — Gated Trigger Execution
+
+Called by the engine on each LTF bar close (or at HTF boundaries for context updates). Pattern:
+
+1. Check `ctx.last_updated` — return `None` if no context has been loaded yet
+2. Call `self.scan()` on the LTF data (delegates to the existing scan logic)
+3. Gate by HTF regime — reject signals whose direction conflicts with the HTF trend
+4. Enrich the signal with MTF metadata (`htf_context_summary`, `ltf_trigger_summary`)
+
+**Gating logic per strategy:**
+
+- **EMA Crossover**: `BULLISH` regime rejects SHORT signals; `BEARISH` rejects LONG
+- **MACD Momentum**: Same direction alignment gating based on histogram phase
+- **RSI Reversal**: `OVERSOLD` rejects SHORT; `OVERBOUGHT` rejects LONG; `NEUTRAL` allows both
+- **Bollinger Squeeze**: Only `SQUEEZE` regime allows signals through; `NO_SQUEEZE` gates all
+- **Volume Climax**: No directional gate (both TFs match), delegates entirely to `scan()`
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `ema_crossover.py` | Added `ExecutionMode`/`datetime` imports, 3 class attrs, `update_context()`, `evaluate_trigger()`. Version bumped to `1.5`. |
+| `macd_momentum.py` | Added `ExecutionMode`/`datetime` imports, 3 class attrs, `update_context()`, `evaluate_trigger()`. Version bumped to `1.2`. |
+| `rsi_reversal.py` | Added `ExecutionMode`/`datetime` imports, 3 class attrs, `update_context()`, `evaluate_trigger()`. Version bumped to `1.2`. |
+| `bollinger_squeeze.py` | Added `ExecutionMode`/`datetime` imports, 3 class attrs, `update_context()`, `evaluate_trigger()`. Version bumped to `2.3`. |
+| `volume_climax.py` | Added `ExecutionMode`/`datetime` imports, 3 class attrs, `update_context()`, `evaluate_trigger()`. Version bumped to `1.2`.

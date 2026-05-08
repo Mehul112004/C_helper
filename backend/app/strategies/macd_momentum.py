@@ -7,14 +7,62 @@ LONG: MACD line crosses above signal line with histogram turning positive.
 SHORT: MACD line crosses below signal line with histogram turning negative.
 """
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 
 
 class MACDMomentumStrategy(BaseStrategy):
     name = "MACD Momentum"
     description = "MACD/signal cross with histogram confirmation"
     timeframes = ["15m", "1h", "4h", "1d"]
-    version = "1.1"
+    version = "1.2"
+
+    execution_mode = ExecutionMode.ON_CLOSE
+    context_tf = "1h"
+    execution_tf = "15m"
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        if htf_indicators.macd_histogram is not None:
+            if htf_indicators.macd_histogram > 0:
+                ctx.regime = "BULLISH"
+            else:
+                ctx.regime = "BEARISH"
+
+        ctx.indicators_snapshot = {
+            'macd_histogram': htf_indicators.macd_histogram,
+            'macd_line': htf_indicators.macd_line,
+            'macd_signal': htf_indicators.macd_signal,
+        }
+        ctx.indicators_snapshot.update({
+            'ema_50': htf_indicators.ema_50,
+            'ema_200': htf_indicators.ema_200,
+        })
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        signal = self.scan(symbol, timeframe, ltf_candles, ltf_indicators, [], None)
+        if signal is None:
+            return None
+
+        if ctx.regime == "BULLISH" and signal.direction == "SHORT":
+            return None
+        if ctx.regime == "BEARISH" and signal.direction == "LONG":
+            return None
+
+        htf_hist = ctx.indicators_snapshot.get('macd_histogram')
+        signal.htf_context_summary = f"HTF regime: {ctx.regime} (MACD histogram {'positive' if htf_hist and htf_hist > 0 else 'negative'})"
+        signal.ltf_trigger_summary = f"MACD crossover on {timeframe} aligned with 1H histogram"
+        return signal
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         # Guard: need current and previous MACD values

@@ -14,14 +14,60 @@ v2.2 Changes (1H win-rate focused):
   - Added RSI overbought/oversold guard (soft gate, -0.10 confidence)
 """
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 
 
 class BollingerSqueezeStrategy(BaseStrategy):
     name = "Bollinger Band Squeeze"
     description = "TTM Squeeze breakout with Keltner Channel validation and split entry"
     timeframes = ["15m", "1h", "4h"]
-    version = "2.2"
+    version = "2.3"
+
+    execution_mode = ExecutionMode.ON_CLOSE
+    context_tf = "1h"
+    execution_tf = "15m"
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        if self._is_squeeze(htf_indicators):
+            ctx.regime = "SQUEEZE"
+        else:
+            ctx.regime = "NO_SQUEEZE"
+
+        ctx.indicators_snapshot = {
+            'bb_width': (htf_indicators.bb_width
+                         if htf_indicators.bb_width is not None else None),
+            'bb_upper': htf_indicators.bb_upper,
+            'bb_lower': htf_indicators.bb_lower,
+            'kc_upper': htf_indicators.kc_upper,
+            'kc_lower': htf_indicators.kc_lower,
+            'atr_14': htf_indicators.atr_14,
+            'rsi_14': htf_indicators.rsi_14,
+        }
+        ctx.htf_candle_count = len(htf_candles) if htf_candles else 0
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        if ctx.regime != "SQUEEZE":
+            return None
+
+        signal = self.scan(symbol, timeframe, ltf_candles, ltf_indicators, [], None)
+        if signal is None:
+            return None
+
+        signal.htf_context_summary = f"HTF regime: {ctx.regime} (1H BB inside KC)"
+        signal.ltf_trigger_summary = f"BB squeeze breakout on {timeframe}"
+        return signal
 
     # ── Base Configuration (applies to all timeframes) ─────────────
     MIN_BB_HISTORY = 10

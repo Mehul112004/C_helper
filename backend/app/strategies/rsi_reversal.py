@@ -6,14 +6,60 @@ LONG: RSI crosses above oversold zone with trend context
 SHORT: RSI crosses below overbought zone with trend context
 """
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 
 
 class RSIReversalStrategy(BaseStrategy):
     name = "RSI Reversal"
     description = "RSI reversal from oversold/overbought with trend alignment"
     timeframes = ["15m", "1h", "4h"]
-    version = "1.1"
+    version = "1.2"
+
+    execution_mode = ExecutionMode.ON_CLOSE
+    context_tf = "4h"
+    execution_tf = "15m"
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        rsi = htf_indicators.rsi_14
+        if rsi is not None:
+            if rsi < 35:
+                ctx.regime = "OVERSOLD"
+            elif rsi > 65:
+                ctx.regime = "OVERBOUGHT"
+            else:
+                ctx.regime = "NEUTRAL"
+
+        ctx.indicators_snapshot = {
+            'rsi_14': rsi,
+            'ema_50': htf_indicators.ema_50,
+            'ema_200': htf_indicators.ema_200,
+        }
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        signal = self.scan(symbol, timeframe, ltf_candles, ltf_indicators, [], None)
+        if signal is None:
+            return None
+
+        if ctx.regime == "OVERSOLD" and signal.direction == "SHORT":
+            return None
+        if ctx.regime == "OVERBOUGHT" and signal.direction == "LONG":
+            return None
+
+        signal.htf_context_summary = f"HTF regime: {ctx.regime} (RSI {ctx.indicators_snapshot.get('rsi_14', 'N/A')})"
+        signal.ltf_trigger_summary = f"RSI reversal on {timeframe}"
+        return signal
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         # Guard: need current and previous RSI values

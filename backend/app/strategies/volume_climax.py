@@ -7,14 +7,54 @@ Looks for a high volume candle (Volume > 2x MA20) with a relatively small body i
 Occurring after a directional trend, this often spots local bottoms or tops before a reversal.
 """
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 
 class VolumeClimaxStrategy(BaseStrategy):
     name = "Volume Climax"
     description = "Detects institutional stopping volume or climax buying for trend reversals."
     timeframes = ["5m", "15m", "1h"]
-    version = "1.1"
+    version = "1.2"
     min_confidence = 0.55
+
+    execution_mode = ExecutionMode.ON_CLOSE
+    context_tf = "1h"
+    execution_tf = "1h"
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        if htf_indicators.ema_50 and htf_indicators.ema_200:
+            if htf_indicators.ema_50 > htf_indicators.ema_200:
+                ctx.regime = "BULLISH"
+            else:
+                ctx.regime = "BEARISH"
+
+        ctx.indicators_snapshot = {
+            'ema_50': htf_indicators.ema_50,
+            'ema_200': htf_indicators.ema_200,
+            'rsi_14': htf_indicators.rsi_14,
+            'atr_14': htf_indicators.atr_14,
+        }
+        ctx.htf_candle_count = len(htf_candles) if htf_candles else 0
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        signal = self.scan(symbol, timeframe, ltf_candles, ltf_indicators, [], None)
+        if signal is None:
+            return None
+
+        signal.htf_context_summary = f"HTF regime: {ctx.regime}"
+        signal.ltf_trigger_summary = f"Volume climax on {timeframe}"
+        return signal
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         if len(candles) < 10 or not indicators.volume_ma_20:

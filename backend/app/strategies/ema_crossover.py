@@ -1,10 +1,54 @@
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
+
 
 class EMACrossoverStrategy(BaseStrategy):
     name = "EMA Crossover"
     description = "EMA 9 crosses EMA 21 with EMA 50 trend filter"
     timeframes = ["5m", "15m", "1h", "4h"]
-    version = "1.4"
+    version = "1.5"
+
+    execution_mode = ExecutionMode.ON_CLOSE
+    context_tf = "4h"
+    execution_tf = "15m"
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        if htf_indicators.ema_50 and htf_indicators.ema_200:
+            if htf_indicators.ema_50 > htf_indicators.ema_200:
+                ctx.regime = "BULLISH"
+            else:
+                ctx.regime = "BEARISH"
+
+        ctx.indicators_snapshot = {
+            'ema_50': htf_indicators.ema_50,
+            'ema_200': htf_indicators.ema_200,
+            'rsi_14': htf_indicators.rsi_14,
+        }
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        signal = self.scan(symbol, timeframe, ltf_candles, ltf_indicators, [], None)
+        if signal is None:
+            return None
+
+        if ctx.regime == "BULLISH" and signal.direction == "SHORT":
+            return None
+        if ctx.regime == "BEARISH" and signal.direction == "LONG":
+            return None
+
+        signal.htf_context_summary = f"HTF regime: {ctx.regime} (EMA50 vs EMA200)"
+        signal.ltf_trigger_summary = f"EMA 9/21 crossover on {timeframe}"
+        return signal
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
         if len(candles) < 4:
