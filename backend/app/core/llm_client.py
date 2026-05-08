@@ -29,24 +29,19 @@ class LLMClient:
     """
 
     @staticmethod
-    def _build_prompt_context(
+    def _build_legacy_prompt(
         signal: SetupSignal,
         candles: list[Candle],
         indicators: Indicators,
         sr_zones: list[dict],
         htf_candles: list[Candle] = None
     ) -> str:
-        """
-        Constructs the system/user prompt combining the setup and the raw data.
-        Limits the candle data to the last 20 to reduce context size and speed up inference.
-        """
-        # Take the last 20 candles (reduced from 30 to speed up LLM response)
+        """Original single-TF prompt builder — used when signal has no MTF context."""
         recent_candles = candles[-20:] if len(candles) >= 20 else candles
         candle_text = "Recent Candles (OHLCV):\n"
         for c in recent_candles:
             candle_text += f"{c.open_time.strftime('%Y-%m-%d %H:%M')} O:{c.open:.2f} H:{c.high:.2f} L:{c.low:.2f} C:{c.close:.2f} V:{c.volume:.0f}\n"
 
-        # Indicators text — only include non-None values
         ind_parts = []
         if indicators.rsi_14 is not None:
             ind_parts.append(f"RSI(14): {indicators.rsi_14:.1f}")
@@ -66,7 +61,6 @@ class LLMClient:
             ind_parts.append(f"ATR(14): {indicators.atr_14:.4f}")
         ind_text = "Indicators:\n" + "\n".join(ind_parts) + "\n" if ind_parts else ""
 
-        # Candle Momentum Analysis — inject concrete numbers for the LLM
         current = candles[-1] if candles else None
         momentum_text = ""
         if current and indicators.atr_14:
@@ -81,11 +75,10 @@ class LLMClient:
                 f"  NOTE: Body/ATR > 1.0x = aggressive candle. Range/ATR > 1.5x = abnormal volatility.\n\n"
             )
 
-        # S/R Zones text
         sr_text = ""
         if sr_zones:
             sr_text = "S/R Zones:\n"
-            for idx, z in enumerate(sr_zones[:5]): # limit to 5
+            for z in sr_zones[:5]:
                 sr_text += f"  {z.get('zone_type')} at {z.get('price_level')} (score: {z.get('strength_score', 0):.2f})\n"
 
         tf_warning = ""
@@ -127,18 +120,159 @@ class LLMClient:
         return prompt
 
     @staticmethod
+    def _build_dual_context_prompt(
+        signal: SetupSignal,
+        candles: list[Candle],
+        indicators: Indicators,
+        sr_zones: list[dict],
+        htf_context=None,
+    ) -> str:
+        """Build a dual-context prompt with MACRO CONTEXT + MICRO TRIGGER sections."""
+        context_tf = signal.context_tf or "HTF"
+        execution_tf = signal.execution_tf or signal.timeframe
+
+        # --- MACRO CONTEXT ---
+        macro_parts = [f"=== MACRO CONTEXT (HTF — {context_tf}) ==="]
+
+        if htf_context is not None:
+            regime = getattr(htf_context, 'regime', 'NEUTRAL')
+            macro_parts.append(f"Regime: {regime}")
+
+            active_zones = getattr(htf_context, 'active_zones', [])
+            if active_zones:
+                zones_text = "Active Zones:"
+                for az in active_zones[:5]:
+                    zones_text += f"\n  {az.zone_type} ({az.direction}) [{az.bottom:.2f} - {az.top:.2f}]"
+                macro_parts.append(zones_text)
+
+            indicators_snapshot = getattr(htf_context, 'indicators_snapshot', {})
+            if indicators_snapshot:
+                snap_parts = []
+                if indicators_snapshot.get('ema_50'):
+                    snap_parts.append(f"EMA50={indicators_snapshot['ema_50']:.2f}")
+                if indicators_snapshot.get('ema_200'):
+                    snap_parts.append(f"EMA200={indicators_snapshot['ema_200']:.2f}")
+                if indicators_snapshot.get('rsi_14'):
+                    snap_parts.append(f"RSI={indicators_snapshot['rsi_14']:.1f}")
+                if indicators_snapshot.get('atr_14'):
+                    snap_parts.append(f"ATR={indicators_snapshot['atr_14']:.4f}")
+                if snap_parts:
+                    macro_parts.append("HTF Indicators: " + ", ".join(snap_parts))
+
+        if signal.htf_context_summary:
+            macro_parts.append(f"Summary: {signal.htf_context_summary}")
+
+        macro_section = "\n".join(macro_parts) + "\n\n"
+
+        # --- MICRO TRIGGER ---
+        micro_parts = [f"=== MICRO TRIGGER (LTF — {execution_tf}) ==="]
+
+        if signal.ltf_trigger_summary:
+            micro_parts.append(f"Trigger: {signal.ltf_trigger_summary}")
+
+        if indicators:
+            ltf_parts = []
+            if indicators.ema_9 is not None:
+                ltf_parts.append(f"EMA9={indicators.ema_9:.2f}")
+            if indicators.ema_21 is not None:
+                ltf_parts.append(f"EMA21={indicators.ema_21:.2f}")
+            if indicators.rsi_14 is not None:
+                ltf_parts.append(f"RSI={indicators.rsi_14:.1f}")
+            if indicators.atr_14 is not None:
+                ltf_parts.append(f"ATR={indicators.atr_14:.4f}")
+            if ltf_parts:
+                micro_parts.append("LTF Indicators: " + ", ".join(ltf_parts))
+
+            current = candles[-1] if candles else None
+            if current and indicators.atr_14:
+                body_ratio = current.body_size / indicators.atr_14 if indicators.atr_14 > 0 else 0
+                range_ratio = current.range_size / indicators.atr_14 if indicators.atr_14 > 0 else 0
+                candle_type = "BULLISH" if current.is_bullish else "BEARISH"
+                micro_parts.append(
+                    f"Trigger Candle: {candle_type} | "
+                    f"Body/ATR: {body_ratio:.2f}x | Range/ATR: {range_ratio:.2f}x | "
+                    f"U-wick: {current.upper_wick:.2f} | L-wick: {current.lower_wick:.2f}"
+                )
+
+        if candles:
+            recent = candles[-10:] if len(candles) >= 10 else candles
+            ltf_candle_text = "LTF Candles (last 10):\n"
+            for c in recent:
+                ltf_candle_text += f"  {c.open_time.strftime('%Y-%m-%d %H:%M')} O:{c.open:.2f} H:{c.high:.2f} L:{c.low:.2f} C:{c.close:.2f} V:{c.volume:.0f}\n"
+            micro_parts.append(ltf_candle_text.strip())
+
+        micro_section = "\n".join(micro_parts) + "\n\n"
+
+        # --- TRADE PROPOSAL ---
+        trade_parts = [
+            "=== TRADE PROPOSAL ===",
+            f"Direction: {signal.direction}",
+            f"Entry: {signal.entry}",
+            f"SL: {signal.sl}",
+            f"TP1: {signal.tp1}, TP2: {signal.tp2}",
+            f"Confidence: {signal.confidence:.2f}",
+            f"Strategy: {signal.strategy_name}",
+            f"Notes: {signal.notes}",
+        ]
+        trade_section = "\n".join(trade_parts) + "\n\n"
+
+        prompt = (
+            f"You are an elite crypto trading risk manager. Your job is to PROTECT capital. "
+            f"Review this algorithmic signal and decide: CONFIRM, REJECT, or MODIFY.\n\n"
+            f"CRITICAL RULES:\n"
+            f"1. You MUST write your full reasoning FIRST, then assign a confidence score, then give the verdict.\n"
+            f"2. Only reference data provided below. Do NOT invent or hallucinate data points.\n"
+            f"3. If you are unsure, REJECT. Capital preservation is the priority.\n\n"
+            f"VERIFICATION STEPS:\n"
+            f"1. MACRO ALIGNMENT: Does the MICRO trigger align with the MACRO context (regime + active zones)?\n"
+            f"2. ZONE INTERACTION: Is the entry near a valid Active Zone from the HTF context? If not, REJECT.\n"
+            f"3. CANDLE QUALITY: Does the trigger candle show proper rejection or confirmation?\n"
+            f"4. RISK/REWARD: Is the SL too tight for current ATR volatility? If yes, MODIFY.\n\n"
+            f"Your job: Does the MICRO trigger align with the MACRO context?\n"
+            f"Confirm, Reject, or Modify the trade with reasoning.\n\n"
+            f"{macro_section}"
+            f"{micro_section}"
+            f"{trade_section}"
+            f"Respond ONLY in valid JSON. Write reasoning FIRST, then confidence_score (1-10), then verdict:\n"
+            f'{{"reasoning": "your step-by-step analysis here", "confidence_score": 1, "verdict": "CONFIRM|REJECT|MODIFY", '
+            f'"modified_sl": null, "modified_tp1": null, "modified_tp2": null}}\n'
+        )
+        return prompt
+
+    @staticmethod
+    def _build_prompt_context(
+        signal: SetupSignal,
+        candles: list[Candle],
+        indicators: Indicators,
+        sr_zones: list[dict],
+        htf_candles: list[Candle] = None,
+        htf_context=None,
+    ) -> str:
+        """
+        Routes to legacy or dual-context prompt builder based on signal MTF metadata.
+        """
+        if signal.context_tf and signal.htf_context_summary:
+            return LLMClient._build_dual_context_prompt(
+                signal, candles, indicators, sr_zones, htf_context
+            )
+        return LLMClient._build_legacy_prompt(
+            signal, candles, indicators, sr_zones, htf_candles
+        )
+
+    @staticmethod
     def evaluate_signal(
         signal: SetupSignal,
         candles: list[Candle],
         indicators: Indicators,
         sr_zones: list[dict],
-        htf_candles: list[Candle] = None
+        htf_candles: list[Candle] = None,
+        htf_context=None,
     ) -> Tuple[Optional[LLMVerdictSchema], str, str]:
         """
         Sends the signal and context to the configured LLM synchronously.
         Returns a tuple: (parsed LLMVerdictSchema or None, prompt used, raw response text).
         """
-        prompt = LLMClient._build_prompt_context(signal, candles, indicators, sr_zones, htf_candles)
+        prompt = LLMClient._build_prompt_context(signal, candles, indicators, sr_zones, htf_candles, htf_context)
         
         system_prompt = (
             "You are a quantitative trading risk manager. "

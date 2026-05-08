@@ -105,6 +105,8 @@ class StrategyRegistry:
                         timeframes=json.dumps(instance.timeframes),
                         enabled=True,
                         min_confidence=instance.min_confidence,
+                        execution_mode=instance.execution_mode.value,
+                        context_tf=instance.context_tf or None,
                     )
                     db.session.add(record)
 
@@ -128,6 +130,10 @@ class StrategyRegistry:
                     'strategy_type': self._types.get(name, 'unknown'),
                     'enabled': self._enabled.get(name, True),
                     'min_confidence': instance.min_confidence,
+                    'execution_mode': instance.execution_mode.value,
+                    'context_tf': instance.context_tf or None,
+                    'execution_tf': instance.execution_tf or None,
+                    'has_mtf_support': instance.has_mtf_support(),
                 })
         return result
 

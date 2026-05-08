@@ -930,6 +930,7 @@ class LiveScanner:
         """Unified signal handler — WatchingManager, SSE, Telegram, LLM queue."""
         from app.core.telegram_queue import telegram_queue
         from app.core.llm_queue import llm_queue
+        from app.core.zone_manager import zone_manager
 
         setup_dict, is_new = WatchingManager.create_or_update_setup(session_id, signal)
         event_type = "setup_detected" if is_new else "setup_updated"
@@ -938,6 +939,7 @@ class LiveScanner:
         if is_new:
             telegram_queue.enqueue_watching_alert(setup_dict['id'])
             if hasattr(strategy, 'should_confirm_with_llm') and strategy.should_confirm_with_llm(signal):
+                htf_ctx = zone_manager.get_context(signal.symbol, strategy.name) if strategy.has_mtf_support() else None
                 llm_queue.enqueue_signal(
                     watching_setup_id=setup_dict['id'],
                     signal=signal,
@@ -945,6 +947,7 @@ class LiveScanner:
                     indicators=indicators,
                     sr_zones=sr_zones,
                     htf_candles=htf_candles,
+                    htf_context=htf_ctx,
                 )
 
     def _fetch_candles_for_tf(self, symbol, timeframe, limit=50):

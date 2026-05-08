@@ -2,10 +2,9 @@ import threading
 import queue
 import time
 import logging
-from typing import Dict, Any, Tuple
-import uuid
+from typing import Dict, Any, Tuple, Optional
 
-from app.core.base_strategy import SetupSignal, Candle, Indicators
+from app.core.base_strategy import SetupSignal, Candle, Indicators, ContextState
 from app.core.llm_client import LLMClient
 from app.core.telegram_queue import telegram_queue
 from app.core.outcome_tracker import outcome_tracker
@@ -14,8 +13,8 @@ from app.core.sse import sse_manager
 logger = logging.getLogger(__name__)
 
 # Queue payload type: 
-# (watching_setup_id, SetupSignal, candles_list, indicators_obj, sr_zones_list, htf_candles)
-QueuePayload = Tuple[str, SetupSignal, list[Candle], Indicators, list[dict], list[Candle]]
+# (watching_setup_id, SetupSignal, candles_list, indicators_obj, sr_zones_list, htf_candles, htf_context)
+QueuePayload = Tuple[str, SetupSignal, list[Candle], Indicators, list[dict], list[Candle], Optional[ContextState]]
 
 class LLMQueueManager:
     """
@@ -47,9 +46,9 @@ class LLMQueueManager:
             self._worker_thread.join(timeout=2)
             logger.info("LLM background worker stopped.")
 
-    def enqueue_signal(self, watching_setup_id: str, signal: SetupSignal, candles: list[Candle], indicators: Indicators, sr_zones: list[dict], htf_candles: list[Candle] = None):
+    def enqueue_signal(self, watching_setup_id: str, signal: SetupSignal, candles: list[Candle], indicators: Indicators, sr_zones: list[dict], htf_candles: list[Candle] = None, htf_context=None):
         """Place a candidate signal in the queue to be evaluated."""
-        self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, htf_candles))
+        self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, htf_candles, htf_context))
         logger.info(f"Enqueued signal for {signal.symbol} / {signal.strategy_name}. Queue size: {self._q.qsize()}")
 
     def _run_worker(self):
@@ -65,7 +64,11 @@ class LLMQueueManager:
                     continue  # Stop signal injected
 
                 # We no longer read retry_count from the queue tuple, all retries are inline
-                watching_setup_id, signal, candles, indicators, sr_zones, htf_candles = item[:6]
+                if len(item) >= 7:
+                    watching_setup_id, signal, candles, indicators, sr_zones, htf_candles, htf_context = item[:7]
+                else:
+                    watching_setup_id, signal, candles, indicators, sr_zones, htf_candles = item[:6]
+                    htf_context = None
 
                 success = False
                 for attempt in range(MAX_RETRIES + 1):
@@ -83,7 +86,9 @@ class LLMQueueManager:
                     
                     logger.info(f"Processing LLM evaluation for {signal.symbol} - {signal.strategy_name} "
                                 f"(attempt {attempt + 1}/{MAX_RETRIES + 1})")
-                    verdict_data, prompt, raw_response = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones, htf_candles)
+                    verdict_data, prompt, raw_response = LLMClient.evaluate_signal(
+                        signal, candles, indicators, sr_zones, htf_candles, htf_context
+                    )
                     
                     # Log every interaction
                     self._log_prompt(watching_setup_id, signal, verdict_data, prompt, raw_response)
