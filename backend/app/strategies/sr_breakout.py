@@ -7,7 +7,11 @@ LONG: Close breaks above resistance zone with strong body and volume
 SHORT: Close breaks below support zone with strong body and volume
 """
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    ActiveZone, BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 
 
 class SRBreakoutStrategy(BaseStrategy):
@@ -15,6 +19,10 @@ class SRBreakoutStrategy(BaseStrategy):
     description = "Price breaks and retests a key zone"
     timeframes = ["15m", "1h", "4h"]
     version = "1.1"
+
+    execution_mode = ExecutionMode.HYBRID
+    context_tf = "4h"
+    execution_tf = "15m"
 
     # Minimum zone strength for breakout
     MIN_ZONE_STRENGTH = 0.25
@@ -153,3 +161,53 @@ class SRBreakoutStrategy(BaseStrategy):
             return (round(entry + (2.0 * risk), 8), round(entry + (3.5 * risk), 8))
         else:
             return (round(entry - (2.0 * risk), 8), round(entry - (3.5 * risk), 8))
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        if sr_zones:
+            for zone in sr_zones:
+                strength = zone.get('strength_score', 0)
+                if strength < self.MIN_ZONE_STRENGTH:
+                    continue
+                zone_type = zone.get('zone_type', '')
+                zone_price = zone.get('price_level', 0)
+                zone_upper = zone.get('zone_upper', zone_price)
+                zone_lower = zone.get('zone_lower', zone_price)
+                ctx.active_zones.append(ActiveZone(
+                    zone_type="sr",
+                    direction="LONG" if zone_type in ('support',) else "SHORT" if zone_type in ('resistance',) else "BOTH",
+                    top=zone_upper,
+                    bottom=zone_lower,
+                    metadata={
+                        'zone_type': zone_type,
+                        'strength_score': strength,
+                        'price_level': zone_price,
+                        'zone_upper': zone_upper,
+                        'zone_lower': zone_lower,
+                    },
+                ))
+
+        ctx.indicators_snapshot = {
+            'rsi_14': htf_indicators.rsi_14,
+        }
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        if not ctx.active_zones:
+            return None
+
+        sr_zones_from_cache = [az.metadata for az in ctx.active_zones]
+        signal = self.scan(symbol, timeframe, ltf_candles, ltf_indicators, sr_zones_from_cache, None)
+
+        if signal is None:
+            return None
+
+        signal.htf_context_summary = f"{len(ctx.active_zones)} S/R zones cached from HTF"
+        signal.ltf_trigger_summary = f"S/R breakout pattern detected on {timeframe}"
+        return signal

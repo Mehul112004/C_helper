@@ -33,8 +33,12 @@ Swing Detection:
   pivot bar count for confirmed swing highs/lows.
 """
 
+from datetime import datetime
+
 from app.core.fractals import build_swing_map
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from app.core.base_strategy import (
+    ActiveZone, BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 
 
 class FibonacciRetracementStrategy(BaseStrategy):
@@ -48,6 +52,10 @@ class FibonacciRetracementStrategy(BaseStrategy):
     timeframes = ["15m", "1h", "4h"]
     version = "2.0"
     min_confidence = 0.60
+
+    execution_mode = ExecutionMode.ON_TOUCH
+    context_tf = "4h"
+    execution_tf = "15m"
 
     # --- Configuration ---
     SWING_LOOKBACK = 30        # Candles to search for the impulse swing
@@ -656,3 +664,172 @@ class FibonacciRetracementStrategy(BaseStrategy):
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         return True
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        if len(htf_candles) < self.SWING_LOOKBACK + self.PIVOT_BARS + 5:
+            return
+        if htf_indicators.atr_14 is None:
+            return
+
+        atr = htf_indicators.atr_14
+        window = htf_candles[-(self.SWING_LOOKBACK + self.PIVOT_BARS):]
+        swings = build_swing_map(window, self.PIVOT_BARS)
+
+        if len(swings) < 2:
+            return
+
+        last_swing_high = None
+        last_swing_low = None
+        for s in reversed(swings):
+            if s['type'] == 'high' and last_swing_high is None:
+                last_swing_high = s
+            if s['type'] == 'low' and last_swing_low is None:
+                last_swing_low = s
+            if last_swing_high and last_swing_low:
+                break
+
+        if not last_swing_high or not last_swing_low:
+            return
+
+        swing_high_price = last_swing_high['price']
+        swing_low_price = last_swing_low['price']
+        swing_range = swing_high_price - swing_low_price
+
+        if swing_range < self.MIN_IMPULSE_ATR * atr:
+            return
+
+        # Determine retracement direction
+        if last_swing_high['index'] > last_swing_low['index']:
+            # Upward impulse → bullish retracement downward
+            direction = "LONG"
+            ctx.regime = "BULLISH"
+        elif last_swing_low['index'] > last_swing_high['index']:
+            # Downward impulse → bearish retracement upward
+            direction = "SHORT"
+            ctx.regime = "BEARISH"
+        else:
+            return
+
+        # Cache fib levels as ActiveZones
+        fib_levels = [
+            (0.382, "secondary_382", 0.58),
+            (0.500, "golden_pocket_lower", 0.65),
+            (0.618, "golden_pocket_upper", 0.65),
+            (0.786, "deep_786", 0.62),
+        ]
+
+        for ratio, zone_label, base_conf in fib_levels:
+            price_level = self._compute_fib_level(swing_high_price, swing_low_price, ratio, direction)
+            tolerance = atr * self.SECONDARY_ZONE_TOLERANCE_ATR
+            ctx.active_zones.append(ActiveZone(
+                zone_type="fib_level",
+                direction=direction,
+                top=price_level + tolerance,
+                bottom=price_level - tolerance,
+                metadata={
+                    'ratio': ratio,
+                    'zone_label': zone_label,
+                    'base_confidence': base_conf,
+                    'swing_high': swing_high_price,
+                    'swing_low': swing_low_price,
+                    'swing_range': swing_range,
+                },
+            ))
+
+        ctx.indicators_snapshot = {
+            'atr_14': atr,
+            'rsi_14': htf_indicators.rsi_14,
+            'swing_high': swing_high_price,
+            'swing_low': swing_low_price,
+        }
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        if not ctx.active_zones:
+            return None
+
+        # Find which fib zone price is in
+        in_golden = False
+        for az in ctx.active_zones:
+            ratio = az.metadata.get('ratio', 0)
+            if 0.48 <= ratio <= 0.63 and az.contains_price(current_price):
+                in_golden = True
+                break
+
+        for az in ctx.active_zones:
+            if not az.contains_price(current_price):
+                continue
+
+            ratio = az.metadata.get('ratio', 0)
+            zone_label = az.metadata.get('zone_label', '')
+            swing_high = az.metadata.get('swing_high', 0)
+            swing_low = az.metadata.get('swing_low', 0)
+            swing_range = az.metadata.get('swing_range', 0)
+            atr = ctx.indicators_snapshot.get('atr_14', 0)
+            direction = az.direction
+            base_conf = az.metadata.get('base_confidence', 0.60)
+
+            # Zone type determination
+            if ratio == 0.382:
+                zone_type = "secondary_382"
+                zone_desc = "38.2% level"
+                min_confluences = self.MIN_CONFLUENCES_SECONDARY
+            elif ratio == 0.786:
+                zone_type = "deep_786"
+                zone_desc = "78.6% deep zone (crypto special)"
+                min_confluences = self.MIN_CONFLUENCES_DEEP
+            else:
+                zone_type = "golden_pocket"
+                zone_desc = "golden pocket (50%-61.8%)"
+                min_confluences = self.MIN_CONFLUENCES_PRIMARY
+
+            # Compute SL/TP from fib structure
+            sl = self._compute_structural_sl(direction, zone_type, swing_high, swing_low, atr)
+            tp1, tp2 = self._compute_structural_tp(direction, swing_high, swing_low, swing_range)
+
+            # Confidence
+            confidence = base_conf
+
+            # Prefer golden pocket if price is in both zones
+            if in_golden and ratio not in (0.500, 0.618) and ratio != 0.786:
+                continue
+
+            confidence = min(confidence, 1.0)
+
+            fib_382 = self._compute_fib_level(swing_high, swing_low, 0.382, direction)
+            fib_50 = self._compute_fib_level(swing_high, swing_low, 0.500, direction)
+            fib_618 = self._compute_fib_level(swing_high, swing_low, 0.618, direction)
+            fib_786 = self._compute_fib_level(swing_high, swing_low, 0.786, direction)
+
+            signal = SetupSignal(
+                strategy_name=self.name,
+                symbol=symbol,
+                timeframe=timeframe,
+                direction=direction,
+                confidence=confidence,
+                entry=current_price,
+                sl=sl,
+                tp1=tp1,
+                tp2=tp2,
+                notes=(
+                    f"{'Bullish' if direction == 'LONG' else 'Bearish'} Fibonacci retracement: "
+                    f"price in {zone_desc}. "
+                    f"Swing: {swing_low:.2f} -> {swing_high:.2f} "
+                    f"(range: {swing_range:.2f}). "
+                    f"Fib 38.2%={fib_382:.2f}, 50%={fib_50:.2f}, "
+                    f"61.8%={fib_618:.2f}, 78.6%={fib_786:.2f}. "
+                    f"SL={sl:.2f}, TP1={tp1:.2f}, TP2={tp2:.2f}."
+                ),
+            )
+            signal.htf_context_summary = f"HTF fib grid cached: swing {swing_low:.2f}-{swing_high:.2f}, direction={direction}"
+            signal.ltf_trigger_summary = f"Price entered {zone_desc} on tick (ON_TOUCH)"
+            return signal
+
+        return None

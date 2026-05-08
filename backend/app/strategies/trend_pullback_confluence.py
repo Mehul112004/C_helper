@@ -19,7 +19,11 @@ Safeguards:
   - Will NOT fire if current candle has no rejection from the 50 EMA.
 """
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 
 
 class TrendPullbackConfluenceStrategy(BaseStrategy):
@@ -31,6 +35,10 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
     timeframes = ["15m"]
     version = "1.0"
     min_confidence = 0.60
+
+    execution_mode = ExecutionMode.HYBRID
+    context_tf = "4h"
+    execution_tf = "15m"
 
     # Configuration
     RSI_OVERSOLD_THRESHOLD = 40  # RSI must have dipped below this for LONG
@@ -210,3 +218,41 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
 
     def should_confirm_with_llm(self, signal):
         return True
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        trend = "NEUTRAL"
+        if all([htf_indicators.ema_50, htf_indicators.ema_100, htf_indicators.ema_200]):
+            if htf_indicators.ema_50 > htf_indicators.ema_100 > htf_indicators.ema_200:
+                trend = "BULLISH"
+            elif htf_indicators.ema_50 < htf_indicators.ema_100 < htf_indicators.ema_200:
+                trend = "BEARISH"
+
+        ctx.regime = trend
+        ctx.indicators_snapshot = {
+            'ema_50': htf_indicators.ema_50,
+            'ema_100': htf_indicators.ema_100,
+            'ema_200': htf_indicators.ema_200,
+            'rsi_14': htf_indicators.rsi_14,
+        }
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        signal = self.scan(symbol, timeframe, ltf_candles, ltf_indicators, [], None)
+        if signal is None:
+            return None
+
+        if ctx.regime == "BULLISH" and signal.direction == "SHORT":
+            return None
+        if ctx.regime == "BEARISH" and signal.direction == "LONG":
+            return None
+
+        signal.htf_context_summary = f"HTF trend: {ctx.regime} (EMA stack on {self.context_tf})"
+        signal.ltf_trigger_summary = f"Pullback to 50 EMA with RSI momentum hook on {timeframe}"
+        return signal

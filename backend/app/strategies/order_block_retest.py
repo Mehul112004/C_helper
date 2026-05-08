@@ -19,7 +19,11 @@ Changelog v3.2 → v3.3:
   - TUNE: FVG confidence boost reduced from 0.15 → 0.10 to prevent single-factor dominance
 """
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    ActiveZone, BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 from app.core.fractals import find_fractal_points
 
 
@@ -32,6 +36,10 @@ class OrderBlockRetestStrategy(BaseStrategy):
     timeframes = ["1h", "4h", "1d"]
     version = "3.3"
     min_confidence = 0.60
+
+    execution_mode = ExecutionMode.ON_TOUCH
+    context_tf = "4h"
+    execution_tf = "5m"
 
     # ── Configuration ──────────────────────────────────────────────
     LOOKBACK = 20               # How far back to search for OB candidates
@@ -415,3 +423,178 @@ class OrderBlockRetestStrategy(BaseStrategy):
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         return True
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        if len(htf_candles) < self.LOOKBACK + self.MAX_IMPULSE_LEN + 5:
+            return
+        if htf_indicators.atr_14 is None:
+            return
+
+        atr = htf_indicators.atr_14
+
+        # HTF bias from SMA-20 baseline
+        htf_bias = None
+        if len(htf_candles) >= 20:
+            htf_baseline = sum(c.close for c in htf_candles[-20:]) / 20
+            htf_bias = "BULL" if htf_candles[-1].close > htf_baseline else "BEAR"
+
+        scan_start = max(0, len(htf_candles) - self.LOOKBACK)
+        scan_end = len(htf_candles) - self.MIN_IMPULSE_LEN - 1
+
+        for i in range(scan_start, scan_end):
+            for direction in ("BULL", "BEAR"):
+                ob_candle = htf_candles[i]
+
+                if direction == "BULL" and not ob_candle.is_bearish:
+                    continue
+                if direction == "BEAR" and not ob_candle.is_bullish:
+                    continue
+
+                # Variable-length impulse
+                impulse_candles = []
+                for j in range(i + 1, min(i + 1 + self.MAX_IMPULSE_LEN, len(htf_candles) - 1)):
+                    c = htf_candles[j]
+                    if direction == "BULL" and c.is_bullish:
+                        impulse_candles.append(c)
+                    elif direction == "BEAR" and c.is_bearish:
+                        impulse_candles.append(c)
+                    else:
+                        break
+
+                if len(impulse_candles) < self.MIN_IMPULSE_LEN:
+                    continue
+
+                impulse_end_idx = i + len(impulse_candles)
+
+                # ATR-normalized displacement
+                if direction == "BULL":
+                    impulse_size = impulse_candles[-1].close - impulse_candles[0].open
+                else:
+                    impulse_size = impulse_candles[0].open - impulse_candles[-1].close
+
+                if impulse_size < atr * self.ATR_DISPLACEMENT:
+                    continue
+
+                # BOS hard gate
+                if not self._has_bos(htf_candles, i, impulse_end_idx, direction):
+                    continue
+
+                ob_high, ob_low = ob_candle.high, ob_candle.low
+
+                # Mitigation check
+                if self._ob_is_mitigated(htf_candles, impulse_end_idx, ob_low, ob_high, direction):
+                    continue
+
+                # Cooldown check
+                if self._in_cooldown(htf_candles, impulse_end_idx, ob_low, ob_high):
+                    continue
+
+                # HTF strict alignment
+                if self.STRICT_HTF_ALIGNMENT and htf_bias:
+                    if direction == "BULL" and htf_bias == "BEAR":
+                        continue
+                    if direction == "BEAR" and htf_bias == "BULL":
+                        continue
+
+                # FVG detection for metadata
+                fvg = self._find_fvg(htf_candles, i + 1, impulse_end_idx, direction)
+
+                ctx.active_zones.append(ActiveZone(
+                    zone_type="order_block",
+                    direction=direction,
+                    top=ob_high,
+                    bottom=ob_low,
+                    metadata={
+                        'ob_idx': i,
+                        'impulse_candles': len(impulse_candles),
+                        'impulse_end_idx': impulse_end_idx,
+                        'fvg': fvg,
+                        'htf_bias': htf_bias,
+                        'atr': atr,
+                    },
+                ))
+
+        ctx.indicators_snapshot = {
+            'atr_14': atr,
+            'rsi_14': htf_indicators.rsi_14,
+            'volume_ma_20': htf_indicators.volume_ma_20,
+        }
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        if not ctx.active_zones:
+            return None
+
+        for az in ctx.active_zones:
+            if az.contains_price(current_price):
+                direction = az.direction
+                ob_high = az.top
+                ob_low = az.bottom
+                atr = az.metadata.get('atr', 0)
+                fvg = az.metadata.get('fvg')
+                impulse_candles = az.metadata.get('impulse_candles', 0)
+
+                # Defense line: price must not close beyond zone boundary
+                if direction == "BULL" and current_price < ob_low:
+                    continue
+                if direction == "BEAR" and current_price > ob_high:
+                    continue
+
+                trade_direction = "LONG" if direction == "BULL" else "SHORT"
+
+                if direction == "BULL":
+                    sl = round(ob_low - (0.5 * atr), 8)
+                else:
+                    sl = round(ob_high + (0.5 * atr), 8)
+
+                risk = abs(current_price - sl)
+                risk = max(risk, atr * 0.1)
+
+                if direction == "BULL":
+                    tp1 = round(current_price + (self.MIN_RR * risk), 8)
+                    tp2 = round(current_price + (3.0 * risk), 8)
+                else:
+                    tp1 = round(current_price - (self.MIN_RR * risk), 8)
+                    tp2 = round(current_price - (3.0 * risk), 8)
+
+                confidence = 0.55
+                if fvg:
+                    confidence += 0.10
+                if impulse_candles >= 3:
+                    confidence += 0.05
+
+                confidence = min(max(confidence, 0.0), 1.0)
+                if confidence < self.min_confidence:
+                    continue
+
+                fvg_text = f"FVG: {fvg['bottom']:.2f}-{fvg['top']:.2f}. " if fvg else ""
+
+                signal = SetupSignal(
+                    strategy_name=self.name,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    direction=trade_direction,
+                    confidence=round(confidence, 4),
+                    entry=current_price,
+                    sl=sl,
+                    tp1=tp1,
+                    tp2=tp2,
+                    notes=(
+                        f"{'Bullish' if direction == 'BULL' else 'Bearish'} OB retest. "
+                        f"OB zone: {ob_low:.2f}-{ob_high:.2f}. "
+                        f"{fvg_text}"
+                        f"HTF bias: {az.metadata.get('htf_bias', 'N/A')}."
+                    ),
+                )
+                signal.htf_context_summary = f"HTF OB cached at {ob_low:.2f}-{ob_high:.2f}, direction={direction}"
+                signal.ltf_trigger_summary = f"Price entered OB zone on tick (ON_TOUCH)"
+                return signal
+
+        return None

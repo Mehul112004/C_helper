@@ -15,7 +15,11 @@ Safeguards:
   - Sniper Entry: Limit orders at 50% wick retracement
 """
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    ActiveZone, BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 from app.core.fractals import find_fractal_points
 
 CLUSTER_TOLERANCE = 0.001   # Fractals within 0.1% are considered "equal"
@@ -59,6 +63,10 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
     timeframes = ["5m", "15m"]
     version = "1.2" # Bumped for Volume Gate & 50% Wick Limit Entries
     min_confidence = 0.60
+
+    execution_mode = ExecutionMode.HYBRID
+    context_tf = "1h"
+    execution_tf = "5m"
 
     # --- Configuration ---
     LOOKBACK = 30           
@@ -260,3 +268,146 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
 
     def should_confirm_with_llm(self, signal):
         return True
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        if len(htf_candles) < self.LOOKBACK + self.PIVOT_BARS + 2:
+            return
+
+        window = htf_candles[-(self.LOOKBACK + self.PIVOT_BARS):-1]
+        fractal_highs, fractal_lows = find_fractal_points(window[:-self.PIVOT_BARS], self.PIVOT_BARS)
+
+        atr = htf_indicators.atr_14
+        if not atr:
+            atr = 0
+
+        window_range = max(c.high for c in window) - min(c.low for c in window)
+        window_high = max(c.high for c in window)
+        window_low = min(c.low for c in window)
+
+        if fractal_highs and atr:
+            level, cluster_count = find_strongest_unbroken_fractal(fractal_highs, window_high, direction=1)
+            if level is not None:
+                non_fractal_highs = [c.high for i, c in enumerate(window) if i not in [f[0] for f in fractal_highs]]
+                avg_high = sum(non_fractal_highs) / len(non_fractal_highs) if non_fractal_highs else level
+                prominence = level - avg_high
+                if prominence >= atr * 0.5 and window_range >= atr * 1.0:
+                    ctx.active_zones.append(ActiveZone(
+                        zone_type="liquidity_pool",
+                        direction="BEAR",
+                        top=level * (1 + self.SWEEP_TOLERANCE),
+                        bottom=level * (1 - self.SWEEP_TOLERANCE),
+                        metadata={'level': level, 'cluster_count': cluster_count},
+                    ))
+
+        if fractal_lows and atr:
+            level, cluster_count = find_strongest_unbroken_fractal(fractal_lows, window_low, direction=-1)
+            if level is not None:
+                non_fractal_lows = [c.low for i, c in enumerate(window) if i not in [f[0] for f in fractal_lows]]
+                avg_low = sum(non_fractal_lows) / len(non_fractal_lows) if non_fractal_lows else level
+                prominence = avg_low - level
+                if prominence >= atr * 0.5 and window_range >= atr * 1.0:
+                    ctx.active_zones.append(ActiveZone(
+                        zone_type="liquidity_pool",
+                        direction="BULL",
+                        top=level * (1 + self.SWEEP_TOLERANCE),
+                        bottom=level * (1 - self.SWEEP_TOLERANCE),
+                        metadata={'level': level, 'cluster_count': cluster_count},
+                    ))
+
+        ctx.indicators_snapshot = {
+            'rsi_14': htf_indicators.rsi_14,
+            'atr_14': atr,
+            'volume_ma_20': htf_indicators.volume_ma_20,
+        }
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        if not ctx.active_zones or not ltf_candles:
+            return None
+
+        current = ltf_candles[-1]
+
+        if ltf_indicators.atr_14 and current.body_size > 2 * ltf_indicators.atr_14:
+            return None
+
+        candle_range = current.high - current.low
+        if candle_range <= 0:
+            return None
+
+        # HTF bias
+        htf_bias = ctx.regime
+
+        for az in ctx.active_zones:
+            level = az.metadata.get('level')
+            cluster_count = az.metadata.get('cluster_count', 0)
+
+            if az.direction == "BEAR":
+                sweep_threshold = level * (1 + self.SWEEP_TOLERANCE)
+                if current.high > sweep_threshold and current.close < level:
+                    if ltf_indicators.rsi_14 is not None and ltf_indicators.rsi_14 < 30:
+                        continue
+                    if current.upper_wick >= current.body_size * 1.2:
+                        close_position = (current.close - current.low) / candle_range
+                        if close_position <= 0.40:
+                            if ltf_indicators.volume_ma_20 and current.volume < (ltf_indicators.volume_ma_20 * 1.2):
+                                continue
+                            confidence = 0.65
+                            if current.upper_wick > current.body_size * 2.0:
+                                confidence += 0.10
+                            if ltf_indicators.rsi_14 and ltf_indicators.rsi_14 > 70:
+                                confidence += 0.08
+                            if cluster_count >= 2:
+                                confidence += 0.08
+                            if htf_bias == "BULL":
+                                confidence -= 0.15
+                            if confidence >= self.min_confidence:
+                                entry = round(current.close + ((current.high - current.close) * 0.5), 8)
+                                signal = SetupSignal(
+                                    strategy_name=self.name, symbol=symbol, timeframe=timeframe,
+                                    direction="SHORT", confidence=min(confidence, 1.0), entry=entry,
+                                    notes=f"Bearish Sweep: Wick pierced pool at {level:.2f}. "
+                                          f"Rejection wick {current.upper_wick / max(current.body_size, 0.0001):.1f}x body.",
+                                )
+                                signal.htf_context_summary = f"HTF liquidity pool at {level:.2f} (cluster={cluster_count})"
+                                signal.ltf_trigger_summary = f"Wick sweep + volume climax on {timeframe}"
+                                return signal
+
+            elif az.direction == "BULL":
+                sweep_threshold = level * (1 - self.SWEEP_TOLERANCE)
+                if current.low < sweep_threshold and current.close > level:
+                    if ltf_indicators.rsi_14 is not None and ltf_indicators.rsi_14 > 70:
+                        continue
+                    if current.lower_wick >= current.body_size * 1.2:
+                        close_position = (current.close - current.low) / candle_range
+                        if close_position >= 0.60:
+                            if ltf_indicators.volume_ma_20 and current.volume < (ltf_indicators.volume_ma_20 * 1.2):
+                                continue
+                            confidence = 0.65
+                            if current.lower_wick > current.body_size * 2.0:
+                                confidence += 0.10
+                            if ltf_indicators.rsi_14 and ltf_indicators.rsi_14 < 30:
+                                confidence += 0.08
+                            if cluster_count >= 2:
+                                confidence += 0.08
+                            if htf_bias == "BEAR":
+                                confidence -= 0.15
+                            if confidence >= self.min_confidence:
+                                entry = round(current.close - ((current.close - current.low) * 0.5), 8)
+                                signal = SetupSignal(
+                                    strategy_name=self.name, symbol=symbol, timeframe=timeframe,
+                                    direction="LONG", confidence=min(confidence, 1.0), entry=entry,
+                                    notes=f"Bullish Sweep: Wick pierced pool at {level:.2f}. "
+                                          f"Rejection wick {current.lower_wick / max(current.body_size, 0.0001):.1f}x body.",
+                                )
+                                signal.htf_context_summary = f"HTF liquidity pool at {level:.2f} (cluster={cluster_count})"
+                                signal.ltf_trigger_summary = f"Wick sweep + volume climax on {timeframe}"
+                                return signal
+
+        return None

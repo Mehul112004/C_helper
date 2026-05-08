@@ -15,7 +15,11 @@ This confluence requirement eliminates weak FVGs that lack structural
 institutional backing and are likely to be sliced through.
 """
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from datetime import datetime
+
+from app.core.base_strategy import (
+    ActiveZone, BaseStrategy, Candle, ExecutionMode, Indicators, SetupSignal,
+)
 
 
 class FVGMitigationStrategy(BaseStrategy):
@@ -24,6 +28,10 @@ class FVGMitigationStrategy(BaseStrategy):
     timeframes = ["15m", "1h", "4h"]
     version = "2.0"
     min_confidence = 0.55
+
+    execution_mode = ExecutionMode.ON_TOUCH
+    context_tf = "1h"
+    execution_tf = "5m"
 
     def _has_adjacent_bullish_ob(self, candles: list[Candle], fvg_candle_idx: int) -> dict | None:
         """
@@ -231,3 +239,97 @@ class FVGMitigationStrategy(BaseStrategy):
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         return True
+
+    def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
+        ctx = self._context_state
+        ctx.clear()
+
+        if len(htf_candles) < 15:
+            return
+
+        for i in range(max(2, len(htf_candles) - 10), len(htf_candles) - 1):
+            c1 = htf_candles[i - 2]
+            c3 = htf_candles[i]
+
+            # Bullish FVG
+            if c3.low > c1.high:
+                fvg_top = c3.low
+                fvg_bottom = c1.high
+                already_mitigated = False
+                for k in range(i + 1, len(htf_candles)):
+                    if htf_candles[k].low <= fvg_bottom:
+                        already_mitigated = True
+                        break
+                if not already_mitigated:
+                    ob = self._has_adjacent_bullish_ob(htf_candles, i - 2)
+                    if ob is not None:
+                        ctx.active_zones.append(ActiveZone(
+                            zone_type="fvg",
+                            direction="BULL",
+                            top=fvg_top,
+                            bottom=fvg_bottom,
+                            metadata={'ob': ob},
+                        ))
+
+            # Bearish FVG
+            if c3.high < c1.low:
+                fvg_top = c1.low
+                fvg_bottom = c3.high
+                already_mitigated = False
+                for k in range(i + 1, len(htf_candles)):
+                    if htf_candles[k].high >= fvg_top:
+                        already_mitigated = True
+                        break
+                if not already_mitigated:
+                    ob = self._has_adjacent_bearish_ob(htf_candles, i - 2)
+                    if ob is not None:
+                        ctx.active_zones.append(ActiveZone(
+                            zone_type="fvg",
+                            direction="BEAR",
+                            top=fvg_top,
+                            bottom=fvg_bottom,
+                            metadata={'ob': ob},
+                        ))
+
+        ctx.indicators_snapshot = {
+            'rsi_14': htf_indicators.rsi_14,
+            'volume_ma_20': htf_indicators.volume_ma_20,
+        }
+        ctx.last_updated = datetime.utcnow()
+
+    def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
+        ctx = self._context_state
+        if not ctx.last_updated:
+            return None
+
+        if not ctx.active_zones:
+            return None
+
+        for az in ctx.active_zones:
+            if az.contains_price(current_price):
+                ob = az.metadata.get('ob', {})
+                confidence = 0.62
+
+                if az.direction == "BULL":
+                    direction = "LONG"
+                else:
+                    direction = "SHORT"
+
+                signal = SetupSignal(
+                    strategy_name=self.name,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    direction=direction,
+                    confidence=min(confidence, 1.0),
+                    entry=current_price,
+                    notes=(
+                        f"{'Bullish' if az.direction == 'BULL' else 'Bearish'} FVG mitigation with OB confluence. "
+                        f"FVG Zone: {az.bottom:.2f}-{az.top:.2f}. "
+                        f"Backing OB: {ob.get('low', 0):.2f}-{ob.get('high', 0):.2f}."
+                    ),
+                )
+                signal.htf_context_summary = f"HTF FVG cached at {az.bottom:.2f}-{az.top:.2f} with OB"
+                signal.ltf_trigger_summary = f"Price entered FVG zone on tick (ON_TOUCH)"
+                return signal
+
+        return None
