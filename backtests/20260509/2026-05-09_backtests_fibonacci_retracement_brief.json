@@ -1,0 +1,154 @@
+{
+  "last_git_commit_id": "a89249ad1038bbe782d37708622ab3367fb0fb9a",
+  "date": "2026-05-09",
+  "config": {
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT"
+    ],
+    "timeframes": [
+      "5m",
+      "15m",
+      "1h",
+      "4h",
+      "1d"
+    ],
+    "lookback_days": 120,
+    "initial_capital": 10000.0,
+    "risk_per_trade": 0.01
+  },
+  "runs": [
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "15m",
+      "strategy_name": "Fibonacci Retracement",
+      "run_id": "e8ad8cd1-24b8-4f76-b953-4cf32a26fc24",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 81,
+        "win_rate": 18.52,
+        "total_pnl": -1578.61,
+        "total_pnl_pct": -15.79,
+        "sharpe_ratio": -1.7356,
+        "sortino_ratio": 0.0,
+        "max_drawdown": 1845.5,
+        "max_drawdown_pct": 18.45,
+        "avg_rr": 3.3476,
+        "profit_factor": 0.7608,
+        "avg_trade_duration_mins": 132.22,
+        "best_trade_pnl": 710.52,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Fibonacci Retracement",
+      "run_id": "eef421a2-ca8c-41ec-bb32-366dc8bfa6f1",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 25,
+        "win_rate": 44.0,
+        "total_pnl": 2104.78,
+        "total_pnl_pct": 21.05,
+        "sharpe_ratio": 6.1817,
+        "sortino_ratio": 7.70436259835614e+16,
+        "max_drawdown": 500.0,
+        "max_drawdown_pct": 4.1,
+        "avg_rr": 3.1862,
+        "profit_factor": 2.5034,
+        "avg_trade_duration_mins": 350.4,
+        "best_trade_pnl": 540.07,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Fibonacci Retracement",
+      "run_id": "32d696f9-b2bc-4f72-9ab3-e710cc7ddc60",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 8,
+        "win_rate": 37.5,
+        "total_pnl": 545.65,
+        "total_pnl_pct": 5.46,
+        "sharpe_ratio": 4.9064,
+        "sortino_ratio": 0.1083,
+        "max_drawdown": 300.0,
+        "max_drawdown_pct": 2.77,
+        "avg_rr": 3.4855,
+        "profit_factor": 2.0913,
+        "avg_trade_duration_mins": 1170.0,
+        "best_trade_pnl": 430.75,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "timeframe": "15m",
+      "strategy_name": "Fibonacci Retracement",
+      "run_id": "76243c4b-2758-4191-bdad-1c39a74af3a1",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 80,
+        "win_rate": 17.5,
+        "total_pnl": -2357.68,
+        "total_pnl_pct": -23.58,
+        "sharpe_ratio": -3.0063,
+        "sortino_ratio": 0.0,
+        "max_drawdown": 3522.11,
+        "max_drawdown_pct": 34.43,
+        "avg_rr": 3.0302,
+        "profit_factor": 0.6428,
+        "avg_trade_duration_mins": 158.25,
+        "best_trade_pnl": 453.66,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Fibonacci Retracement",
+      "run_id": "4ebb3970-1318-4d96-bbc7-8ed65846bd04",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 17,
+        "win_rate": 29.41,
+        "total_pnl": 198.76,
+        "total_pnl_pct": 1.99,
+        "sharpe_ratio": 1.0187,
+        "sortino_ratio": 1.0699169831143916e+16,
+        "max_drawdown": 387.95,
+        "max_drawdown_pct": 3.74,
+        "avg_rr": 2.7975,
+        "profit_factor": 1.1656,
+        "avg_trade_duration_mins": 487.06,
+        "best_trade_pnl": 486.7,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Fibonacci Retracement",
+      "run_id": "81ad0170-882d-442b-99e7-e78165ec15ef",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 3,
+        "win_rate": 0.0,
+        "total_pnl": -300.0,
+        "total_pnl_pct": -3.0,
+        "sharpe_ratio": 0.0,
+        "sortino_ratio": 0.0,
+        "max_drawdown": 300.0,
+        "max_drawdown_pct": 3.0,
+        "avg_rr": 0.0,
+        "profit_factor": 0.0,
+        "avg_trade_duration_mins": 320.0,
+        "best_trade_pnl": -100.0,
+        "worst_trade_pnl": -100.0
+      }
+    }
+  ]
+}

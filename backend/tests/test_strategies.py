@@ -1053,19 +1053,19 @@ class TestFibonacciRetracement:
         assert "confluence" in signal.notes.lower()
 
     def test_sl_behind_wick(self, strategy):
-        """SL is placed at the structural invalidation level (78.6%)."""
+        """SL is placed behind the trigger candle's pattern extreme (wick)."""
         candles = self._build_bullish_impulse_candles()
         indicators = _make_indicators(
             atr_14=2.0, rsi_14=45.0, volume_ma_20=1000.0,
             ema_21_history=[80.0, 81.0, 82.0, 83.0, 84.0]
         )
         signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
-        
+
         assert signal is not None
         sl = strategy.calculate_sl(signal, candles, 2.0)
-        
-        # FIX: Assert structural SL at 78.6% Fib (94.28) minus 0.2 ATR buffer (0.4) = 93.88
-        assert round(sl, 2) == 93.88
+
+        # Pattern SL: min(current.low, prev.low) - 0.2 ATR = 97.50 - 0.4 = 97.10
+        assert round(sl, 2) == 97.10
 
     def test_tp_risk_based(self, strategy):
         """TP1 targets the swing high, TP2 targets Fibonacci extension."""
