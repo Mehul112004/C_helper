@@ -26,10 +26,9 @@ class SRRejectionStrategy(BaseStrategy):
     context_tf = "4h"
     execution_tf = "15m"
 
-    # Minimum zone strength to consider
+    min_confidence = 0.60
+    MIN_RR = 1.5
     MIN_ZONE_STRENGTH = 0.3
-
-    # Minimum wick-to-range ratio for a rejection candle
     MIN_WICK_RATIO = 0.60
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):

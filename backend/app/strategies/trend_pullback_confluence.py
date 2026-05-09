@@ -201,20 +201,25 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
         return None
 
     def calculate_sl(self, signal, candles, atr):
-        """SL below the 100 EMA zone — gives room for the pullback to breathe."""
+        """Structural SL: 5-candle pivot + 0.3 ATR buffer."""
         entry = signal.entry or candles[-1].close
         if signal.direction == "LONG":
-            return round(entry - (1.8 * atr), 8)
+            recent_low = min(c.low for c in candles[-5:])
+            return round(recent_low - (0.3 * atr), 8)
         else:
-            return round(entry + (1.8 * atr), 8)
+            recent_high = max(c.high for c in candles[-5:])
+            return round(recent_high + (0.3 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr, sr_zones=None):
-        """TP1 at 2x ATR, TP2 at 4x ATR — trend continuation targets."""
+        """Risk-based TP: 2.0R and 4.0R from structural stop."""
         entry = signal.entry or candles[-1].close
+        sl = self.calculate_sl(signal, candles, atr)
+        risk = abs(entry - sl)
+        risk = max(risk, atr * 0.2)
         if signal.direction == "LONG":
-            return (round(entry + 2.0 * atr, 8), round(entry + 4.0 * atr, 8))
+            return (round(entry + 2.0 * risk, 8), round(entry + 4.0 * risk, 8))
         else:
-            return (round(entry - 2.0 * atr, 8), round(entry - 4.0 * atr, 8))
+            return (round(entry - 2.0 * risk, 8), round(entry - 4.0 * risk, 8))
 
     def should_confirm_with_llm(self, signal):
         return True

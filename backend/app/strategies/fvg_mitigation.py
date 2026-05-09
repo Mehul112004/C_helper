@@ -27,7 +27,7 @@ class FVGMitigationStrategy(BaseStrategy):
     description = "Trades FVG mitigation only when backed by a valid Order Block — enforces structural confluence"
     timeframes = ["15m", "1h", "4h"]
     version = "2.0"
-    min_confidence = 0.55
+    min_confidence = 0.60
 
     execution_mode = ExecutionMode.ON_TOUCH
     context_tf = "1h"
@@ -227,15 +227,15 @@ class FVGMitigationStrategy(BaseStrategy):
             return round(candles[-1].high + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr, sr_zones=None):
-        """Risk-based TP: 1.5R and 3.0R from structural stop."""
+        """Risk-based TP: 2.0R and 4.0R from structural stop."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)
         risk = abs(entry - sl)
         risk = max(risk, atr * 0.1)
         if signal.direction == "LONG":
-            return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
+            return (round(entry + (2.0 * risk), 8), round(entry + (4.0 * risk), 8))
         else:
-            return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
+            return (round(entry - (2.0 * risk), 8), round(entry - (4.0 * risk), 8))
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         return True

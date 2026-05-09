@@ -252,7 +252,16 @@ class StrategyRunner:
                 if timeframe not in strategy.timeframes:
                     continue
 
-                if strategy.has_mtf_support():
+                # Use MTF path only if context was actually updated (HTF data available).
+                # When backtesting without HTF data (htf_boundaries is None), fall back
+                # to the legacy scan() path so strategies still produce signals.
+                ctx_available = (
+                    htf_boundaries is not None
+                    and strategy.has_mtf_support()
+                    and strategy._context_state.last_updated is not None
+                )
+
+                if ctx_available:
                     signal = cls.run_mtf_scan(
                         strategy=strategy,
                         symbol=symbol,

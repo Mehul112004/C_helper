@@ -24,10 +24,9 @@ class SRBreakoutStrategy(BaseStrategy):
     context_tf = "4h"
     execution_tf = "15m"
 
-    # Minimum zone strength for breakout
+    min_confidence = 0.60
+    MIN_RR = 1.5
     MIN_ZONE_STRENGTH = 0.25
-
-    # Minimum body-to-range ratio for a "strong" breakout candle
     MIN_BODY_RATIO = 0.50
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):

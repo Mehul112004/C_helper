@@ -18,6 +18,7 @@ class RSIReversalStrategy(BaseStrategy):
     description = "RSI reversal from oversold/overbought with trend alignment"
     timeframes = ["15m", "1h", "4h"]
     version = "1.2"
+    min_confidence = 0.60
 
     execution_mode = ExecutionMode.ON_CLOSE
     context_tf = "4h"
@@ -143,12 +144,12 @@ class RSIReversalStrategy(BaseStrategy):
             return round(recent_high + (0.2 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr, sr_zones=None):
-        """Risk-based TP: 1.5R and 3.0R from structural stop."""
+        """Risk-based TP: 2.0R and 4.0R from structural stop."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)
         risk = abs(entry - sl)
         risk = max(risk, atr * 0.2)
         if signal.direction == "LONG":
-            return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
+            return (round(entry + (2.0 * risk), 8), round(entry + (4.0 * risk), 8))
         else:
-            return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
+            return (round(entry - (2.0 * risk), 8), round(entry - (4.0 * risk), 8))

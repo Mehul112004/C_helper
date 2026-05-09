@@ -68,7 +68,7 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
     context_tf = "1h"
     execution_tf = "5m"
 
-    # --- Configuration ---
+    MIN_RR = 1.5
     LOOKBACK = 30           
     PIVOT_BARS = 3          
     COOLDOWN_CANDLES = 4    
