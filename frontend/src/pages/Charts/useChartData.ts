@@ -18,6 +18,31 @@ export interface ChartDataState {
 
 const EMPTY_EMA: ChartDataState['emaLines'] = { ema_9: [], ema_21: [], ema_50: [], ema_200: [] };
 
+const TF_MS: Record<string, number> = {
+  '1s': 1_000,
+  '1m': 60_000,
+  '3m': 180_000,
+  '5m': 300_000,
+  '15m': 900_000,
+  '30m': 1_800_000,
+  '1h': 3_600_000,
+  '2h': 7_200_000,
+  '4h': 14_400_000,
+  '6h': 21_600_000,
+  '8h': 28_800_000,
+  '12h': 43_200_000,
+  '1d': 86_400_000,
+  '3d': 259_200_000,
+  '1w': 604_800_000,
+};
+
+function computeCloseTime(candles: CandleData[], timeframe: string): number | null {
+  const tfMs = TF_MS[timeframe];
+  if (!tfMs || candles.length === 0) return null;
+  const lastOpen = new Date(candles[candles.length - 1].open_time).getTime();
+  return lastOpen + tfMs;
+}
+
 /**
  * Custom hook for fetching all chart data: candles, S/R zones, and EMA series.
  * Refetches automatically when inputs change, with debounce.
@@ -89,9 +114,9 @@ export function useChartData(
         error: null,
       });
 
-      // Reset live tick on fresh load
+      // Reset live tick on fresh load, but compute closeTime from candle data
       setLiveTick(null);
-      setCloseTime(null);
+      setCloseTime(computeCloseTime(candleResult.candles, timeframe));
     } catch (err) {
       if (controller.signal.aborted) return;
       setState(prev => ({
@@ -183,7 +208,7 @@ export function useChartData(
           symbol: '',
           timeframe: '',
           open_time: new Date(last.open_time).getTime(),
-          close_time: 0,
+          close_time: new Date(last.open_time).getTime() + (TF_MS[timeframe] || 3600_000),
           open: last.open,
           high: last.high,
           low: last.low,
@@ -195,7 +220,7 @@ export function useChartData(
         return { ...prev, candles: updated };
       });
     },
-    [],
+    [timeframe],
   );
 
   return { ...state, reload: load, applyLiveCandle, updateLastCandle, liveTick, closeTime };
