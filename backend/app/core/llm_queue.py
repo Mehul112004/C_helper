@@ -2,6 +2,7 @@ import threading
 import queue
 import time
 import logging
+import uuid
 from typing import Dict, Any, Tuple, Optional
 
 from app.core.base_strategy import SetupSignal, Candle, Indicators, ContextState
