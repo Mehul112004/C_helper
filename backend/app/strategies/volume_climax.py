@@ -25,7 +25,7 @@ class VolumeClimaxStrategy(BaseStrategy):
     execution_tf = "1h"
 
     def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
-        ctx = self._context_state
+        ctx = self._get_ctx(symbol)
         ctx.clear()
 
         if htf_indicators.ema_50 and htf_indicators.ema_200:
@@ -44,7 +44,7 @@ class VolumeClimaxStrategy(BaseStrategy):
         ctx.last_updated = datetime.utcnow()
 
     def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
-        ctx = self._context_state
+        ctx = self._get_ctx(symbol)
         if not ctx.last_updated:
             return None
 

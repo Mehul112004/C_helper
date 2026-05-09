@@ -24,8 +24,17 @@ class ZoneManager:
 
     def update(self, symbol: str, strategy_name: str, state: ContextState) -> None:
         key = (symbol, strategy_name)
+        # Store a copy to prevent cross-symbol contamination from
+        # shared singleton strategy instances.
+        copy = ContextState(
+            regime=state.regime,
+            active_zones=list(state.active_zones),
+            indicators_snapshot=dict(state.indicators_snapshot),
+            last_updated=state.last_updated,
+            htf_candle_count=state.htf_candle_count,
+        )
         with self._lock:
-            self._cache[key] = state
+            self._cache[key] = copy
 
     def get_context(self, symbol: str, strategy_name: str) -> Optional[ContextState]:
         key = (symbol, strategy_name)

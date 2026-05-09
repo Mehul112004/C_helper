@@ -258,7 +258,7 @@ class StrategyRunner:
                 ctx_available = (
                     htf_boundaries is not None
                     and strategy.has_mtf_support()
-                    and strategy._context_state.last_updated is not None
+                    and strategy._get_ctx(symbol).last_updated is not None
                 )
 
                 if ctx_available:

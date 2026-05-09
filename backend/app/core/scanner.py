@@ -383,13 +383,33 @@ class LiveScanner:
                         htf_ind = self._compute_indicators_for_tf(symbol, strategy.context_tf)
                         if htf_candles_for_ctx and htf_ind:
                             strategy.update_context(symbol, htf_candles_for_ctx, htf_ind, sr_zones)
-                            zone_manager.update(symbol, strat_name, strategy.context)
+                            zone_manager.update(symbol, strat_name, strategy._get_ctx(symbol))
                             print(f"[LiveScanner]    🔄 Context updated: {strat_name} "
-                                  f"regime={strategy.context.regime} zones={len(strategy.context.active_zones)}")
+                                  f"regime={strategy._get_ctx(symbol).regime} zones={len(strategy._get_ctx(symbol).active_zones)}")
 
                     # --- Execution routing by mode ---
                     if strategy.has_mtf_support():
                         exec_tf = strategy.execution_tf
+
+                        # Guard against WS race condition: when the execution-tf
+                        # candle closes at the same wall-clock moment as the
+                        # context-tf candle, the context-tf message may arrive
+                        # after the execution-tf message.  If the cached context
+                        # is stale (> 1 context-tf period old), force a refresh
+                        # before evaluating so we never fire on outdated HTF data.
+                        if strategy.context_tf and strategy.context_tf != timeframe:
+                            ctx = strategy._get_ctx(symbol)
+                            ctx_stale = (
+                                ctx.last_updated is None
+                                or self._is_context_stale(ctx.last_updated, strategy.context_tf)
+                            )
+                            if ctx_stale:
+                                htf_c = self._fetch_candles_for_tf(symbol, strategy.context_tf, limit=50)
+                                htf_i = self._compute_indicators_for_tf(symbol, strategy.context_tf)
+                                if htf_c and htf_i:
+                                    strategy.update_context(symbol, htf_c, htf_i, sr_zones)
+                                    zone_manager.update(symbol, strat_name, strategy._get_ctx(symbol))
+
                         if strategy.execution_mode == ExecutionMode.ON_CLOSE and timeframe == exec_tf:
                             signal = StrategyRunner.run_mtf_scan(
                                 strategy, symbol, timeframe,
@@ -972,6 +992,15 @@ class LiveScanner:
         if count > 0 and series:
             return StrategyRunner.prepare_indicators_snapshot(series, count - 1)
         return None
+
+    @staticmethod
+    def _is_context_stale(last_updated, context_tf: str) -> bool:
+        """Return True if the context is more than one context_tf period behind now."""
+        from datetime import datetime, timezone, timedelta
+        tf_map = {'5m': 5, '15m': 15, '1h': 60, '4h': 240, '1d': 1440}
+        minutes = tf_map.get(context_tf, 60)
+        age = datetime.now(timezone.utc) - last_updated
+        return age > timedelta(minutes=minutes * 2)
 
     def _on_ws_reconnect(self, session_id: str, symbol: str):
         """

@@ -371,12 +371,23 @@ class BaseStrategy(ABC):
     execution_tf: str = ""
 
     def __init__(self):
-        self._context_state = ContextState()
+        self._contexts: dict[str, ContextState] = {}
+
+    def _get_ctx(self, symbol: str) -> ContextState:
+        """Get or create the per-symbol HTF context state."""
+        if symbol not in self._contexts:
+            self._contexts[symbol] = ContextState()
+        return self._contexts[symbol]
 
     @property
     def context(self) -> ContextState:
-        """Access the cached HTF context state."""
-        return self._context_state
+        """
+        Deprecated — returns the first available context or an empty one.
+        Use _get_ctx(symbol) for per-symbol isolation.
+        """
+        if self._contexts:
+            return next(iter(self._contexts.values()))
+        return ContextState()
 
     @abstractmethod
     def scan(

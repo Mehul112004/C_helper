@@ -97,28 +97,26 @@ def verify_symbol(
     """
     Verify candle data for a single symbol across one or more timeframes.
 
+    Must be called from within a Flask app context.
     Returns a summary dict with per-timeframe stats.
     """
-    app = create_app()
+    # Determine which timeframes to check
+    if timeframes is None:
+        rows = db.session.query(CandleModel.timeframe).filter_by(
+            symbol=symbol
+        ).distinct().all()
+        timeframes = sorted([r[0] for r in rows])
+        if not timeframes:
+            print(f"  No candles found in DB for {symbol}.")
+            return {}
 
-    with app.app_context():
-        # Determine which timeframes to check
-        if timeframes is None:
-            rows = db.session.query(CandleModel.timeframe).filter_by(
-                symbol=symbol
-            ).distinct().all()
-            timeframes = sorted([r[0] for r in rows])
-            if not timeframes:
-                print(f"  No candles found in DB for {symbol}.")
-                return {}
+    summary = {}
 
-        summary = {}
+    for tf in timeframes:
+        tf_stats = _verify_timeframe(symbol, tf, lookback_days, fix, verbose)
+        summary[tf] = tf_stats
 
-        for tf in timeframes:
-            tf_stats = _verify_timeframe(symbol, tf, lookback_days, fix, verbose)
-            summary[tf] = tf_stats
-
-        return summary
+    return summary
 
 
 def _verify_timeframe(

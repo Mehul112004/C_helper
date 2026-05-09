@@ -164,7 +164,7 @@ class SRRejectionStrategy(BaseStrategy):
             return (round(entry - (2.0 * risk), 8), round(entry - (3.5 * risk), 8))
 
     def update_context(self, symbol, htf_candles, htf_indicators, sr_zones):
-        ctx = self._context_state
+        ctx = self._get_ctx(symbol)
         ctx.clear()
 
         if sr_zones:
@@ -196,7 +196,7 @@ class SRRejectionStrategy(BaseStrategy):
         ctx.last_updated = datetime.utcnow()
 
     def evaluate_trigger(self, symbol, timeframe, ltf_candles, ltf_indicators, current_price):
-        ctx = self._context_state
+        ctx = self._get_ctx(symbol)
         if not ctx.last_updated:
             return None
 
