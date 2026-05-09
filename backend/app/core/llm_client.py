@@ -37,6 +37,8 @@ class LLMClient:
         htf_candles: list[Candle] = None
     ) -> str:
         """Original single-TF prompt builder — used when signal has no MTF context."""
+        if indicators is None:
+            indicators = Indicators()
         recent_candles = candles[-20:] if len(candles) >= 20 else candles
         candle_text = "Recent Candles (OHLCV):\n"
         for c in recent_candles:
@@ -128,6 +130,8 @@ class LLMClient:
         htf_context=None,
     ) -> str:
         """Build a dual-context prompt with MACRO CONTEXT + MICRO TRIGGER sections."""
+        if indicators is None:
+            indicators = Indicators()
         context_tf = signal.context_tf or "HTF"
         execution_tf = signal.execution_tf or signal.timeframe
 

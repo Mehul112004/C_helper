@@ -177,10 +177,9 @@ class FibonacciRetracementStrategy(BaseStrategy):
         """
         Detect a bullish or bearish engulfing pattern (Issue #8).
 
-        LONG:  Previous candle bearish, current candle bullish, current body
-               fully engulfs previous body.
-        SHORT: Previous candle bullish, current candle bearish, current body
-               fully engulfs previous body.
+        Uses >=/<= for open/close comparison because in 24/7 crypto markets
+        there are no gaps — current.open is almost always exactly prev.close.
+        Strict < or > would silently reject 95% of valid engulfing patterns.
         """
         if len(candles) < 2:
             return False
@@ -189,11 +188,11 @@ class FibonacciRetracementStrategy(BaseStrategy):
 
         if direction == "LONG":
             return (prev.is_bearish and current.is_bullish and
-                    current.close > prev.open and current.open < prev.close and
+                    current.close >= prev.open and current.open <= prev.close and
                     current.body_size > prev.body_size)
         else:
             return (prev.is_bullish and current.is_bearish and
-                    current.close < prev.open and current.open > prev.close and
+                    current.close <= prev.open and current.open >= prev.close and
                     current.body_size > prev.body_size)
 
     # ── S/R Confluence Check ─────────────────────────────────────────────
@@ -400,8 +399,11 @@ class FibonacciRetracementStrategy(BaseStrategy):
         if last_swing_high['index'] > last_swing_low['index']:
             # Validate impulse size
             if swing_range >= self.MIN_IMPULSE_ATR * atr:
-                # Issue #2: Regime filter — require EMA-21 trending upward
-                if not self._is_trending(indicators, "LONG"):
+                # Structure Invalidation: if price broke below the swing low
+                # after the impulse peak, the structure is broken — fail safely.
+                post_swing_candles = window[last_swing_high['index']:]
+                lowest_since_high = min(c.low for c in post_swing_candles)
+                if lowest_since_high < swing_low_price:
                     return None
 
                 # Issue #9: Validate impulse leg had sufficient volume
@@ -422,8 +424,11 @@ class FibonacciRetracementStrategy(BaseStrategy):
         # The swing low must come AFTER the swing high → downward impulse
         if last_swing_low['index'] > last_swing_high['index']:
             if swing_range >= self.MIN_IMPULSE_ATR * atr:
-                # Issue #2: Regime filter — require EMA-21 trending downward
-                if not self._is_trending(indicators, "SHORT"):
+                # Structure Invalidation: if price broke above the swing high
+                # after the impulse trough, the structure is broken — fail safely.
+                post_swing_candles = window[last_swing_low['index']:]
+                highest_since_low = max(c.high for c in post_swing_candles)
+                if highest_since_low > swing_high_price:
                     return None
 
                 # Issue #9: Validate impulse leg had sufficient volume

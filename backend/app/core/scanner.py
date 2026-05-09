@@ -999,7 +999,10 @@ class LiveScanner:
         from datetime import datetime, timezone, timedelta
         tf_map = {'5m': 5, '15m': 15, '1h': 60, '4h': 240, '1d': 1440}
         minutes = tf_map.get(context_tf, 60)
-        age = datetime.now(timezone.utc) - last_updated
+        now = datetime.now(timezone.utc)
+        if last_updated.tzinfo is None:
+            last_updated = last_updated.replace(tzinfo=timezone.utc)
+        age = now - last_updated
         return age > timedelta(minutes=minutes * 2)
 
     def _on_ws_reconnect(self, session_id: str, symbol: str):

@@ -998,31 +998,31 @@ class TestFibonacciRetracement:
     def test_382_level_lower_confidence(self, strategy):
         """Entry at 38.2% level fires with lower base confidence than golden pocket."""
         candles = self._build_bullish_impulse_candles()
-        
-        # We must overwrite the pullback (candles 31-48) to be much shallower 
-        # so it doesn't crash through the 38.2% level prematurely.
-        for i in range(31, 49):
-            price = 108.0 - (i - 31) * 0.25  # Shallow drop, ends around 103.75
+
+        # Keep pullback candles flat and high so no new swing_low forms.
+        # Only the last candle dips to the 38.2% level (102.36).
+        for i in range(30, 49):
             candles[i] = _make_candle(
-                close=price, open_=price + 0.3,
-                high=price + 0.8, low=price - 0.8,
+                close=107.0, open_=107.3,
+                high=107.8, low=106.2,
                 volume=1000.0, time_offset_hours=i,
             )
 
-        # Create an undeniable hammer candle that pierces the 38.2% level (102.36)
-        # Lower wick size: 1.5. Total range: 2.0. Wick ratio: 75% (Easily passes > 60% filter)
+        # Create an undeniable hammer candle that pierces the 38.2% level
+        # Lower wick: 1.5 on a 2.0 range = 75% rejection ratio
         candles[-1] = _make_candle(
             open_=102.5, high=103.0, low=101.0, close=102.7,
             volume=1500.0, time_offset_hours=49,
         )
-        
+
+        # Need 2 confluences for 38.2% zone: RSI oversold + EMA200 aligned
         indicators = _make_indicators(
-            atr_14=2.0, rsi_14=45.0, volume_ma_20=1000.0,
-            ema_9=100.0, ema_21=99.0, ema_50=97.0, ema_200=93.0,
-            ema_21_history=[80.0, 81.0, 82.0, 83.0, 84.0]
+            atr_14=2.0, rsi_14=35.0, volume_ma_20=1000.0,
+            ema_9=105.0, ema_21=104.0, ema_50=100.0, ema_200=93.0,
+            ema_21_history=[108.0, 107.5, 107.0, 106.5, 106.0],
         )
         signal = strategy.scan("BTCUSDT", "1h", candles, indicators, [])
-        
+
         assert signal is not None
         assert signal.direction == "LONG"
         assert "38.2%" in signal.notes
