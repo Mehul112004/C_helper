@@ -184,6 +184,7 @@ export default function SignalFeed() {
     try {
       await handleStartSession("BTCUSDT", allStratNames, timeframes);
       await handleStartSession("ETHUSDT", allStratNames, timeframes);
+      await handleStartSession("SOLUSDT", allStratNames, timeframes);
     } catch (e) {
       console.error("Quick Start failed", e);
     }
@@ -209,7 +210,7 @@ export default function SignalFeed() {
             disabled={isLoading || strategies.length === 0 || !canStartNew}
             className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow-sm px-4 py-2 rounded font-medium text-sm text-white transition disabled:cursor-not-allowed"
           >
-            Quick Start (BTC & ETH)
+            Quick Start (BTC, ETH & SOL)
           </button>
         </div>
 
