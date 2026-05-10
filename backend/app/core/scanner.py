@@ -273,7 +273,7 @@ class LiveScanner:
                 return
 
         with self._app.app_context():
-            from app.core.indicators import IndicatorService
+            from app.core.indicator_service import IndicatorService
             from app.models.db import SRZone, Candle as CandleModel
             from app.core.strategy_loader import registry
             from app.core.telegram_queue import telegram_queue
@@ -894,7 +894,7 @@ class LiveScanner:
                 self._backfill_historical_data(symbol, timeframes)
                 # Invalidate indicator caches so next candle_close
                 # recomputes from the healed data
-                from app.core.indicators import IndicatorService
+                from app.core.indicator_service import IndicatorService
                 for tf in timeframes:
                     IndicatorService.invalidate_cache(symbol, tf)
 

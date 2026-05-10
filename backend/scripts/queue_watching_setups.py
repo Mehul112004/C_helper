@@ -11,7 +11,7 @@ load_dotenv()
 from app import create_app
 from app.models.db import db, WatchingSetup, Candle as CandleModel, SRZone
 from app.core.base_strategy import SetupSignal, Candle
-from app.core.indicators import IndicatorService
+from app.core.indicator_service import IndicatorService
 from app.core.strategy_runner import StrategyRunner
 from app.core.scanner import live_scanner
 from app.core.llm_queue import llm_queue

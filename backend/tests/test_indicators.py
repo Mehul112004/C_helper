@@ -7,7 +7,7 @@ against known data sequences.
 import pytest
 import pandas as pd
 import numpy as np
-from app.core.indicators import IndicatorService
+from app.core.indicator_service import IndicatorService
 
 
 class TestEMA:

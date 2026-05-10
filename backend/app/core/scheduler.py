@@ -13,7 +13,7 @@ coalesce + max_instances guards (FIX-SCH-10).
 import atexit
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.core.sr_engine import SREngine
-from app.core.indicators import IndicatorService
+from app.core.indicator_service import IndicatorService
 from app.core.config import SUPPORTED_SYMBOLS
 
 

@@ -5,7 +5,7 @@ Serves pre-calculated technical indicator data.
 """
 
 from flask import Blueprint, request, jsonify
-from app.core.indicators import IndicatorService
+from app.core.indicator_service import IndicatorService
 
 indicators_bp = Blueprint('indicators', __name__)
 

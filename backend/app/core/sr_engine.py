@@ -12,7 +12,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from app.models.db import db, Candle, SRZone
-from app.core.indicators import IndicatorService
+from app.core.indicator_service import IndicatorService
+from app.core.indicators import compute_atr
 from app.core.config import SUPPORTED_SYMBOLS
 
 
@@ -413,7 +414,7 @@ class SREngine:
         df = df.sort_values('open_time').reset_index(drop=True)
 
         # Compute ATR for zone width calculations
-        atr_series = IndicatorService.compute_atr(df['high'], df['low'], df['close'], 14)
+        atr_series = compute_atr(df['high'], df['low'], df['close'], 14)
         current_atr = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0
         current_price = float(df['close'].iloc[-1])
 
@@ -464,7 +465,126 @@ class SREngine:
             zone['symbol'] = symbol
             zone['timeframe'] = timeframe
 
-        return merged_zones
+    @classmethod
+    def detect_zones_df(cls, df: pd.DataFrame, symbol: str,
+                        timeframe: str, swing_lookback: int = 5) -> pd.DataFrame:
+        """
+        Run the full S/R detection pipeline on a DataFrame and append zone columns.
+
+        S/R zones do NOT use the masked ffill + mitigation kill-switch pattern
+        (unlike FVGs/OBs). S/R zones persist — a broken resistance flips to
+        support, not to NaN.
+
+        Appends columns:
+            sr_active:        bool — True where zones exist (all rows after detection)
+            sr_support_upper: float64 — upper bound of strongest support
+            sr_support_lower: float64 — lower bound of strongest support
+            sr_support_strength: float64
+            sr_resistance_upper: float64 — upper bound of strongest resistance
+            sr_resistance_lower: float64 — lower bound of strongest resistance
+            sr_resistance_strength: float64
+
+        Args:
+            df: DataFrame with [open_time, open, high, low, close]
+            symbol: Trading pair
+            timeframe: Candle timeframe
+            swing_lookback: Lookback for swing detection
+
+        Returns:
+            DataFrame with sr_* columns appended
+        """
+        df = df.copy()
+        n = len(df)
+
+        # Initialize columns
+        df['sr_active'] = False
+        df['sr_support_upper'] = np.nan
+        df['sr_support_lower'] = np.nan
+        df['sr_support_strength'] = np.nan
+        df['sr_resistance_upper'] = np.nan
+        df['sr_resistance_lower'] = np.nan
+        df['sr_resistance_strength'] = np.nan
+
+        if n < swing_lookback * 2 + 1:
+            return df
+
+        # Compute ATR
+        atr_series = compute_atr(df['high'], df['low'], df['close'], 14)
+        current_atr = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0
+        current_price = float(df['close'].iloc[-1])
+
+        if current_atr <= 0:
+            current_atr = current_price * 0.01
+
+        # Run all detection methods
+        all_zones = []
+
+        swing_zones = cls.detect_swing_points(df, lookback=swing_lookback)
+        all_zones.extend(swing_zones)
+
+        round_zones = cls.detect_round_numbers(symbol, current_price)
+        all_zones.extend(round_zones)
+
+        period_zones = cls.detect_prev_period_hl(symbol)
+        all_zones.extend(period_zones)
+
+        if not all_zones:
+            return df
+
+        # Calculate zone widths
+        for zone in all_zones:
+            upper, lower = cls.calculate_zone_width(zone['price_level'], current_atr)
+            zone['zone_upper'] = upper
+            zone['zone_lower'] = lower
+
+        # Merge and score
+        merged_zones = cls.merge_zones(all_zones, current_atr)
+
+        # Capture formation indices BEFORE score_zone pops _formation_idx.
+        # Swing zones have _formation_idx (candle index). Round numbers and
+        # prev-period levels don't — they exist from the earliest data.
+        zone_form_idx = {}
+        for i, zone in enumerate(merged_zones):
+            zone_form_idx[i] = zone.get('_formation_idx', None)
+
+        for i, zone in enumerate(merged_zones):
+            upper, lower = cls.calculate_zone_width(zone['price_level'], current_atr)
+            zone['zone_upper'] = upper
+            zone['zone_lower'] = lower
+            cls.score_zone(zone, df, timeframe,
+                           formation_idx=zone.pop('_formation_idx', None))
+            # Restore the formation index for temporal masking
+            saved_idx = zone_form_idx.get(i)
+            if saved_idx is not None:
+                zone['_formation_idx'] = saved_idx
+
+        # Separate into support and resistance
+        supports = [z for z in merged_zones if z['zone_type'] in ('support', 'both')]
+        resistances = [z for z in merged_zones if z['zone_type'] in ('resistance', 'both')]
+
+        # Pick strongest support and resistance
+        best_support = max(supports, key=lambda z: z.get('strength_score', 0), default=None)
+        best_resistance = max(resistances, key=lambda z: z.get('strength_score', 0), default=None)
+
+        # ── Temporally-safe zone assignment ──
+        # Zones must only exist AFTER the candle that formed them.
+        # Round numbers and prev-period levels have no _formation_idx
+        # and exist from the earliest valid data point onward.
+        if best_support:
+            form_idx = best_support.get('_formation_idx', swing_lookback * 2)
+            df.loc[df.index[form_idx:], 'sr_active'] = True
+            df.loc[df.index[form_idx:], 'sr_support_upper'] = best_support['zone_upper']
+            df.loc[df.index[form_idx:], 'sr_support_lower'] = best_support['zone_lower']
+            df.loc[df.index[form_idx:], 'sr_support_strength'] = best_support.get('strength_score', 0)
+
+        if best_resistance:
+            form_idx = best_resistance.get('_formation_idx', swing_lookback * 2)
+            df.loc[df.index[form_idx:], 'sr_active'] = True
+            df.loc[df.index[form_idx:], 'sr_resistance_upper'] = best_resistance['zone_upper']
+            df.loc[df.index[form_idx:], 'sr_resistance_lower'] = best_resistance['zone_lower']
+            df.loc[df.index[form_idx:], 'sr_resistance_strength'] = best_resistance.get('strength_score', 0)
+
+        return df
 
     # ---------- Database Persistence ----------
 
@@ -585,7 +705,7 @@ class SREngine:
                 return
 
             # Calculate ATR for zone widths
-            atr_series = IndicatorService.compute_atr(df['high'], df['low'], df['close'], 14)
+            atr_series = compute_atr(df['high'], df['low'], df['close'], 14)
             current_atr = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0
             current_price = float(df['close'].iloc[-1])
 

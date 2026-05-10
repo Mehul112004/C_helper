@@ -18,7 +18,8 @@ from datetime import datetime
 from typing import Optional
 
 from app.core.base_strategy import BaseStrategy, SetupSignal
-from app.core.indicators import IndicatorService
+from app.core.indicator_service import IndicatorService
+from app.core.indicators import compute_atr, compute_ema, compute_rsi, compute_macd, compute_bollinger, compute_keltner, compute_volume_ma
 from app.core.sr_engine import SREngine
 from app.core.strategy_runner import StrategyRunner
 from app.models.db import db, Candle, BacktestRun, BacktestTrade
@@ -54,17 +55,17 @@ class BacktestEngine:
         volumes = df['volume']
         timestamps = df['open_time'].dt.strftime('%Y-%m-%dT%H:%M:%SZ').tolist()
 
-        ema_9 = IndicatorService.compute_ema(closes, 9)
-        ema_21 = IndicatorService.compute_ema(closes, 21)
-        ema_50 = IndicatorService.compute_ema(closes, 50)
-        ema_100 = IndicatorService.compute_ema(closes, 100)
-        ema_200 = IndicatorService.compute_ema(closes, 200)
-        rsi_14 = IndicatorService.compute_rsi(closes, 14)
-        macd = IndicatorService.compute_macd(closes, 12, 26, 9)
-        bb = IndicatorService.compute_bollinger(closes, 20, 2.0)
-        kc = IndicatorService.compute_keltner(highs, lows, closes, 20, 10, 1.5)
-        atr_14 = IndicatorService.compute_atr(highs, lows, closes, 14)
-        vol_ma_20 = IndicatorService.compute_volume_ma(volumes, 20)
+        ema_9 = compute_ema(closes, 9)
+        ema_21 = compute_ema(closes, 21)
+        ema_50 = compute_ema(closes, 50)
+        ema_100 = compute_ema(closes, 100)
+        ema_200 = compute_ema(closes, 200)
+        rsi_14 = compute_rsi(closes, 14)
+        macd = compute_macd(closes, 12, 26, 9)
+        bb = compute_bollinger(closes, 20, 2.0)
+        kc = compute_keltner(highs, lows, closes, 20, 10, 1.5)
+        atr_14 = compute_atr(highs, lows, closes, 14)
+        vol_ma_20 = compute_volume_ma(volumes, 20)
 
         def _series_to_list(series: pd.Series) -> list:
             result = []
@@ -492,7 +493,7 @@ class BacktestEngine:
             indicator_series = cls.compute_indicators_from_df(candle_df)
 
             # 3. Detect S/R zones from the dataset
-            atr_series = IndicatorService.compute_atr(
+            atr_series = compute_atr(
                 candle_df['high'], candle_df['low'], candle_df['close'], 14
             )
             current_atr = float(atr_series.iloc[-1]) if pd.notna(atr_series.iloc[-1]) else 0
