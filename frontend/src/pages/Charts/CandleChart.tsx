@@ -15,6 +15,7 @@ import {
 import type {
   CandleData,
   SRZone,
+  SMCZone,
   IndicatorSeriesPoint,
 } from "../../api/client";
 import type { LiveCandleEvent } from "../../types/signals";
@@ -24,6 +25,14 @@ const ZONE_COLORS: Record<string, { line: string; bg: string }> = {
   support: { line: "#10b981", bg: "rgba(16, 185, 129, 0.06)" },
   resistance: { line: "#ef4444", bg: "rgba(239, 68, 68, 0.06)" },
   both: { line: "#f59e0b", bg: "rgba(245, 158, 11, 0.06)" },
+};
+
+const SMC_COLORS: Record<string, { line: string; bg: string }> = {
+  fvg_bullish:  { line: "#22c55e", bg: "rgba(34, 197, 94, 0.08)" },   // green
+  fvg_bearish:  { line: "#f87171", bg: "rgba(248, 113, 113, 0.08)" },  // red
+  ob_bullish:   { line: "#06b6d4", bg: "rgba(6, 182, 212, 0.08)" },    // cyan
+  ob_bearish:   { line: "#f97316", bg: "rgba(249, 115, 22, 0.08)" },   // orange
+  event:        { line: "#a78bfa", bg: "rgba(167, 139, 250, 0.06)" },  // violet
 };
 
 const EMA_COLORS: Record<string, string> = {
@@ -47,6 +56,8 @@ interface CandleChartProps {
   candles: CandleData[];
   srZones: SRZone[];
   showSRZones: boolean;
+  smcZones: SMCZone[];
+  showSMCZones: boolean;
   emaLines: {
     ema_9: IndicatorSeriesPoint[];
     ema_21: IndicatorSeriesPoint[];
@@ -71,6 +82,8 @@ const CandleChart = forwardRef<CandleChartRef, CandleChartProps>(({
   candles,
   srZones,
   showSRZones,
+  smcZones,
+  showSMCZones,
   emaLines,
   showEMA,
   emaVisible,
@@ -87,6 +100,8 @@ const CandleChart = forwardRef<CandleChartRef, CandleChartProps>(({
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const emaSeriesRef = useRef<Record<string, ISeriesApi<"Line">>>({});
   const srPriceLinesRef = useRef<
+    ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]>[]>([]);
+  const smcPriceLinesRef = useRef<
     ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]>[]>([]);
   const legendRef = useRef<HTMLDivElement>(null);
   const chartInitialized = useRef(false);
@@ -152,6 +167,7 @@ const CandleChart = forwardRef<CandleChartRef, CandleChartProps>(({
       volumeSeriesRef.current = null;
       emaSeriesRef.current = {};
       srPriceLinesRef.current = [];
+      smcPriceLinesRef.current = [];
     }
 
     const chart = createChart(containerRef.current, {
@@ -255,6 +271,7 @@ const CandleChart = forwardRef<CandleChartRef, CandleChartProps>(({
         volumeSeriesRef.current = null;
         emaSeriesRef.current = {};
         srPriceLinesRef.current = [];
+        smcPriceLinesRef.current = [];
         chartInitialized.current = false;
       }
     };
@@ -383,6 +400,77 @@ const CandleChart = forwardRef<CandleChartRef, CandleChartProps>(({
       srPriceLinesRef.current.push(lowerLine);
     }
   }, [showSRZones, srZones]);
+
+  /* ───────────────────── SMC zone price lines (FVG / OB) ───────────────────── */
+  useEffect(() => {
+    if (!candleSeriesRef.current) return;
+    const series = candleSeriesRef.current;
+
+    // Remove old SMC price lines
+    smcPriceLinesRef.current.forEach((line) => {
+      try { series.removePriceLine(line); } catch { /* already removed */ }
+    });
+    smcPriceLinesRef.current = [];
+
+    if (!showSMCZones || smcZones.length === 0) return;
+
+    // Deduplicate zones by exact type + direction + upper + lower
+    const seen = new Set<string>();
+    const uniqueZones = smcZones.filter((z) => {
+      if (z.type === "event" || !z.upper || !z.lower) return false;
+      const key = `${z.type}_${z.direction}_${z.upper}_${z.lower}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    for (const zone of uniqueZones) {
+      // Events don't have upper/lower — skip rendering as lines
+      if (zone.type === 'event') continue;
+      if (!zone.upper || !zone.lower) continue;
+
+      const colorKey = `${zone.type}_${zone.direction || 'bullish'}`;
+      const colors = SMC_COLORS[colorKey] || SMC_COLORS.event;
+      const label = `${zone.type.toUpperCase()} ${(zone.direction || '?').toUpperCase()}`;
+
+      // Center line (midpoint of zone)
+      const mid = (zone.upper + zone.lower) / 2;
+      const centerLine = series.createPriceLine({
+        price: mid,
+        color: colors.line,
+        lineWidth: 2,
+        lineStyle: 2, // dashed
+        axisLabelVisible: true,
+        title: `${label} ${mid.toFixed(2)}`,
+        lineVisible: true,
+      });
+      smcPriceLinesRef.current.push(centerLine);
+
+      // Upper bound
+      const upperLine = series.createPriceLine({
+        price: zone.upper,
+        color: colors.line + "60",
+        lineWidth: 1,
+        lineStyle: 3, // dotted
+        axisLabelVisible: false,
+        title: "",
+        lineVisible: true,
+      });
+      smcPriceLinesRef.current.push(upperLine);
+
+      // Lower bound
+      const lowerLine = series.createPriceLine({
+        price: zone.lower,
+        color: colors.line + "60",
+        lineWidth: 1,
+        lineStyle: 3, // dotted
+        axisLabelVisible: false,
+        title: "",
+        lineVisible: true,
+      });
+      smcPriceLinesRef.current.push(lowerLine);
+    }
+  }, [showSMCZones, smcZones]);
 
   /* ───────────────────── EMA line overlays ───────────────────── */
   useEffect(() => {
@@ -537,6 +625,21 @@ const CandleChart = forwardRef<CandleChartRef, CandleChartProps>(({
             </svg>
             {countdown}
           </div>
+        </div>
+      )}
+
+      {/* SMC zone badge */}
+      {showSMCZones && smcZones.length > 0 && (
+        <div
+          className="z-10 absolute pointer-events-none"
+          style={{
+            top: countdown ? "2.5rem" : "0.75rem",
+            right: showSRZones && srZones.length > 0 ? "8rem" : "1rem",
+          }}
+        >
+          <span className="bg-slate-800/80 px-2 py-1 border border-cyan-500/30 rounded text-[10px] text-cyan-400">
+            {smcZones.length} SMC zone{smcZones.length !== 1 ? "s" : ""}
+          </span>
         </div>
       )}
 

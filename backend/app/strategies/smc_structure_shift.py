@@ -1,284 +1,251 @@
 """
-SMC Structure Shift Strategy (HTF — 1H / 4H)
+SMC Structure Shift Strategy v2.0 — Confluence Engine Edition
 
-Detects Change of Character (ChoCh) and Break of Structure (BOS) using
-dynamically mapped swing highs and lows.
+Phase 2 rewrite: Pure logic gates and confidence scoring.
+All ChoCh/BOS detection delegated to app/core/events.py extraction layer.
 
-Key distinction:
-  - BOS (trend continuation): Price breaks the most recent swing point
-    in the direction of the existing trend with a body close.
-  - ChoCh (trend reversal): Price breaks the most recent swing point
-    *against* the prevailing trend direction with a body close.
+Signal generation:
+  Base requirement: ChoCh or BOS event fires (1 hard gate, down from 6)
+  Additive modifiers: volume > 1.2x MA, strong body (>60% of range),
+                       RSI momentum alignment, FVG presence nearby
 
-Safeguards:
-  - Only body closes count — wick-only piercings are treated as
-    liquidity sweeps and are explicitly rejected.
-  - Requires at least 2 prior swing points to establish a trend context
-    before any signal can fire.
+Confidence budget design:
+  Base (must pass):      0.50  (event fires)
+  Primary confluence:    0.15  (volume spike)
+  Secondary:             0.12  (strong body)
+  Tertiary:              0.10  (RSI momentum)
+  Minor:                 0.05  (FVG nearby)
+  Threshold:             0.70  (requires event + volume or event + body + RSI)
+
+ChoCh vs BOS differentiation:
+  - BOS: trend continuation, higher base reliability
+  - ChoCh: trend reversal, requires stronger confluence to fire
 """
 
-from app.core.fractals import build_swing_map
+import numpy as np
+import pandas as pd
+from typing import Optional
+
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from app.core.base_strategy import safe_lt, safe_gt, safe_between
 
 
 class SMCStructureShiftStrategy(BaseStrategy):
     name = "SMC Structure Shift"
     description = (
-        "Detects Change of Character (ChoCh) or Break of Structure (BOS) "
-        "using dynamically mapped swing highs/lows. Only body closes count — "
-        "wick sweeps are rejected."
+        "Detects ChoCh/BOS events with confluence scoring: "
+        "event + volume + body strength + RSI + FVG."
     )
     timeframes = ["1h", "4h"]
-    version = "1.0"
-    min_confidence = 0.60
+    version = "2.0"
+    min_confidence = 0.70
+
+    # ── Phase 2: Feature Declaration ──
+    required_features = ['choch', 'bos', 'rsi', 'ema', 'atr', 'volume_ma', 'fvg']
+    feature_config = {
+        'rsi_period': 14,
+        'ema_periods': [50],
+        'atr_period': 14,
+        'volume_ma_period': 20,
+    }
+
+    # ── Phase 2: Weighted Scoring Matrix ──
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Confluence scoring for ChoCh/BOS events.
+
+        Hard gate:
+          - Any structural event fires (ChoCh or BOS, either direction)
+
+        Additive modifiers:
+          - Volume > 1.2x MA (+0.15)
+          - Strong body (>60% of range, +0.12)
+          - RSI momentum alignment (+0.10)
+          - FVG active nearby (+0.05)
+
+        BOS bonus: +0.05 over ChoCh (continuation is more reliable than reversal)
+        """
+        # ── Hard Gate: Any structural event ──
+        choch_bull = df.get('event_choch_bullish', pd.Series(False, index=df.index))
+        choch_bear = df.get('event_choch_bearish', pd.Series(False, index=df.index))
+        bos_bull = df.get('event_bos_bullish', pd.Series(False, index=df.index))
+        bos_bear = df.get('event_bos_bearish', pd.Series(False, index=df.index))
+
+        event_fires = (
+            (choch_bull == True) | (choch_bear == True) |
+            (bos_bull == True) | (bos_bear == True)
+        )
+        base_setup = event_fires
+
+        # ── Direction ──
+        is_bullish = ((choch_bull == True) | (bos_bull == True))
+        is_bearish = ((choch_bear == True) | (bos_bear == True))
+        is_choch = ((choch_bull == True) | (choch_bear == True))
+        is_bos = ((bos_bull == True) | (bos_bear == True))
+
+        # ── Base confidence ──
+        df['confidence'] = np.where(base_setup, 0.50, 0.0)
+        df['conf_base'] = df['confidence'].copy()
+
+        # ── BOS bonus over ChoCh ──
+        df['conf_bos'] = np.where(base_setup & is_bos, 0.05, 0.0)
+        df['confidence'] += df['conf_bos']
+
+        # ── Modifier: Volume spike ──
+        vol_spike = df['volume_ma'].notna() & (df['volume'] > df['volume_ma'] * 1.2)
+        df['conf_vol'] = np.where(base_setup & vol_spike, 0.15, 0.0)
+        df['confidence'] += df['conf_vol']
+
+        # ── Modifier: Strong body ──
+        body = (df['close'] - df['open']).abs()
+        candle_range = df['high'] - df['low']
+        strong_body = (candle_range > 0) & (body > 0.6 * candle_range)
+        df['conf_body'] = np.where(base_setup & strong_body, 0.12, 0.0)
+        df['confidence'] += df['conf_body']
+
+        # ── Modifier: RSI momentum ──
+        rsi_ok = df['rsi'].notna() & (
+            (is_bullish & df['rsi'].between(50, 75)) |
+            (is_bearish & df['rsi'].between(25, 50))
+        )
+        df['conf_rsi'] = np.where(base_setup & rsi_ok, 0.10, 0.0)
+        df['confidence'] += df['conf_rsi']
+
+        # ── Modifier: FVG nearby ──
+        fvg_active = df['fvg_active'].notna() & (df['fvg_active'] == True)
+        df['conf_fvg'] = np.where(base_setup & fvg_active, 0.05, 0.0)
+        df['confidence'] += df['conf_fvg']
+
+        # ── Trigger ──
+        df['signal'] = np.where(df['confidence'] >= self.min_confidence, 1, 0)
+
+        # ── Direction ──
+        df['direction'] = None
+        df.loc[(df['signal'] == 1) & is_bullish, 'direction'] = 'LONG'
+        df.loc[(df['signal'] == 1) & is_bearish, 'direction'] = 'SHORT'
+
+        return df
+
+    # ── Legacy scan() — preserved for backward compatibility ──
 
     LOOKBACK = 40
-    PIVOT_BARS = 3    # Bars on each side for swing detection
+    PIVOT_BARS = 3
 
-    def _determine_trend(self, swings: list[dict]) -> str:
-        """
-        Determine prevailing trend from the last few swing points.
-        Returns 'bullish', 'bearish', or 'neutral'.
-        """
-        if len(swings) < 4:
-            return 'neutral'
-
-        # Look at the last 4 swing points
+    def _determine_trend(self, swings):
+        if len(swings) < 4: return 'neutral'
         recent = swings[-4:]
         highs = [s for s in recent if s['type'] == 'high']
         lows = [s for s in recent if s['type'] == 'low']
-
-        # Accelerating trends might only have one valid lower opposite swing point in the window
-        # We ensure there are at least 2 highs + lows in total and the direction aligns
-        if len(highs) + len(lows) >= 3:
-            higher_highs = highs[-1]['price'] > highs[-2]['price'] if len(highs) >= 2 else True
-            higher_lows = lows[-1]['price'] > lows[-2]['price'] if len(lows) >= 2 else True
-            lower_highs = highs[-1]['price'] < highs[-2]['price'] if len(highs) >= 2 else True
-            lower_lows = lows[-1]['price'] < lows[-2]['price'] if len(lows) >= 2 else True
-            
-            # Avoid cases where we assume True because len() < 2 but the existing ones contradict
-            has_hh = len(highs) >= 2 and higher_highs
-            has_hl = len(lows) >= 2 and higher_lows
-            has_lh = len(highs) >= 2 and lower_highs
-            has_ll = len(lows) >= 2 and lower_lows
-
-            if (has_hh and higher_lows) or (higher_highs and has_hl):
-                return 'bullish'
-            elif (has_lh and lower_lows) or (lower_highs and has_ll):
-                return 'bearish'
-
+        if len(highs) + len(lows) < 3: return 'neutral'
+        higher_highs = highs[-1]['price'] > highs[-2]['price'] if len(highs) >= 2 else False
+        higher_lows = lows[-1]['price'] > lows[-2]['price'] if len(lows) >= 2 else False
+        lower_highs = highs[-1]['price'] < highs[-2]['price'] if len(highs) >= 2 else False
+        lower_lows = lows[-1]['price'] < lows[-2]['price'] if len(lows) >= 2 else False
+        has_hh = len(highs) >= 2 and higher_highs
+        has_hl = len(lows) >= 2 and higher_lows
+        has_lh = len(highs) >= 2 and lower_highs
+        has_ll = len(lows) >= 2 and lower_lows
+        if (has_hh and higher_lows) or (higher_highs and has_hl): return 'bullish'
+        elif (has_lh and lower_lows) or (lower_highs and has_ll): return 'bearish'
         return 'neutral'
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
-        if len(candles) < self.LOOKBACK + self.PIVOT_BARS:
-            return None
+        from app.core.fractals import build_swing_map
 
+        if len(candles) < self.LOOKBACK + self.PIVOT_BARS: return None
         window = candles[-(self.LOOKBACK + self.PIVOT_BARS):]
         current = candles[-1]
         atr = indicators.atr_14 or 0
         swings = build_swing_map(window, self.PIVOT_BARS)
-
-        if len(swings) < 4:
-            return None
-
+        if len(swings) < 4: return None
         trend = self._determine_trend(swings)
-        if trend == 'neutral':
-            return None
+        if trend == 'neutral': return None
 
-        # Find the most recent swing high and swing low
-        last_swing_high = None
-        last_swing_low = None
+        last_swing_high = last_swing_low = None
         for s in reversed(swings):
-            if s['type'] == 'high' and last_swing_high is None:
-                last_swing_high = s
-            if s['type'] == 'low' and last_swing_low is None:
-                last_swing_low = s
-            if last_swing_high and last_swing_low:
-                break
+            if s['type'] == 'high' and last_swing_high is None: last_swing_high = s
+            if s['type'] == 'low' and last_swing_low is None: last_swing_low = s
+            if last_swing_high and last_swing_low: break
 
-        if not last_swing_high or not last_swing_low:
-            return None
+        if not last_swing_high or not last_swing_low: return None
 
-        # --- Bullish BOS: Price body closes above the last swing high in a bullish trend ---
+        # BOS Bullish
         if trend == 'bullish' and last_swing_high:
             level = last_swing_high['price']
-            # Body close must be above (not just wick)
             body_close_above = current.close > level and min(current.open, current.close) > level * 0.998
-
-            # Reject if only wick touched (body stayed below or equal)
             wick_only = current.high > level and max(current.open, current.close) <= level
-
             if body_close_above and not wick_only:
                 confidence = 0.65
-                signal_type = "BOS"
-
-                # +0.10 for volume confirmation
-                if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.2:
-                    confidence += 0.10
-
-                # +0.08 for strong body (low wick ratio)
-                if current.body_size > current.range_size * 0.6:
-                    confidence += 0.08
-
-                # +0.07 for RSI momentum (not yet overbought)
-                if indicators.rsi_14 and 50 < indicators.rsi_14 < 75:
-                    confidence += 0.07
-
-                # SL behind the opposite swing (last swing low) + 1.0 ATR
+                if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.2: confidence += 0.10
+                if current.body_size > current.range_size * 0.6: confidence += 0.08
+                if indicators.rsi_14 and 50 < indicators.rsi_14 < 75: confidence += 0.07
                 sl_price = round(last_swing_low['price'] - (1.0 * atr), 8) if atr > 0 else None
+                return SetupSignal(strategy_name=self.name, symbol=symbol, timeframe=timeframe,
+                                   direction="LONG", confidence=min(confidence, 1.0),
+                                   entry=current.close, sl=sl_price,
+                                   notes=f"Bullish BOS: body closed above swing high at {level:.2f}. Trend: {trend}.")
 
-                return SetupSignal(
-                    strategy_name=self.name,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    direction="LONG",
-                    confidence=min(confidence, 1.0),
-                    entry=current.close,
-                    sl=sl_price,
-                    notes=(
-                        f"Bullish {signal_type}: body closed above swing high at {level:.2f}. "
-                        f"Trend: {trend}. Close: {current.close:.2f}. "
-                        f"SL ref: swing low {last_swing_low['price']:.2f}."
-                    ),
-                )
-
-        # --- Bearish BOS: Price body closes below the last swing low in a bearish trend ---
+        # BOS Bearish
         if trend == 'bearish' and last_swing_low:
             level = last_swing_low['price']
             body_close_below = current.close < level and max(current.open, current.close) < level * 1.002
-
             wick_only = current.low < level and min(current.open, current.close) >= level
-
             if body_close_below and not wick_only:
                 confidence = 0.65
-                signal_type = "BOS"
-
-                if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.2:
-                    confidence += 0.10
-
-                if current.body_size > current.range_size * 0.6:
-                    confidence += 0.08
-
-                if indicators.rsi_14 and 25 < indicators.rsi_14 < 50:
-                    confidence += 0.07
-
-                # SL behind the opposite swing (last swing high) + 1.0 ATR
+                if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.2: confidence += 0.10
+                if current.body_size > current.range_size * 0.6: confidence += 0.08
+                if indicators.rsi_14 and 25 < indicators.rsi_14 < 50: confidence += 0.07
                 sl_price = round(last_swing_high['price'] + (1.0 * atr), 8) if atr > 0 else None
+                return SetupSignal(strategy_name=self.name, symbol=symbol, timeframe=timeframe,
+                                   direction="SHORT", confidence=min(confidence, 1.0),
+                                   entry=current.close, sl=sl_price,
+                                   notes=f"Bearish BOS: body closed below swing low at {level:.2f}. Trend: {trend}.")
 
-                return SetupSignal(
-                    strategy_name=self.name,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    direction="SHORT",
-                    confidence=min(confidence, 1.0),
-                    entry=current.close,
-                    sl=sl_price,
-                    notes=(
-                        f"Bearish {signal_type}: body closed below swing low at {level:.2f}. "
-                        f"Trend: {trend}. Close: {current.close:.2f}. "
-                        f"SL ref: swing high {last_swing_high['price']:.2f}."
-                    ),
-                )
-
-        # --- ChoCh: Reversal against prevailing trend ---
-        # Bullish ChoCh: bearish trend, but price breaks last swing high
+        # ChoCh Bullish
         if trend == 'bearish' and last_swing_high:
             level = last_swing_high['price']
             body_close_above = current.close > level and min(current.open, current.close) > level * 0.998
             wick_only = current.high > level and max(current.open, current.close) <= level
-
             if body_close_above and not wick_only:
-                confidence = 0.60  # Slightly lower — reversal is riskier
-
-                if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.3:
-                    confidence += 0.12
-
-                if current.body_size > current.range_size * 0.6:
-                    confidence += 0.08
-
-                if indicators.rsi_14 and indicators.rsi_14 > 50:
-                    confidence += 0.05
-
-                # ChoCh SL: behind the last swing low + 1.5 ATR (wider for reversals)
+                confidence = 0.60
+                if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.3: confidence += 0.12
+                if current.body_size > current.range_size * 0.6: confidence += 0.08
+                if indicators.rsi_14 and indicators.rsi_14 > 50: confidence += 0.05
                 sl_price = round(last_swing_low['price'] - (1.5 * atr), 8) if atr > 0 else None
+                return SetupSignal(strategy_name=self.name, symbol=symbol, timeframe=timeframe,
+                                   direction="LONG", confidence=min(confidence, 1.0),
+                                   entry=current.close, sl=sl_price,
+                                   notes=f"Bullish ChoCh: body broke above swing high at {level:.2f} against bearish trend.")
 
-                return SetupSignal(
-                    strategy_name=self.name,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    direction="LONG",
-                    confidence=min(confidence, 1.0),
-                    entry=current.close,
-                    sl=sl_price,
-                    notes=(
-                        f"Bullish ChoCh: body broke above swing high at {level:.2f} "
-                        f"against prevailing bearish trend. Potential reversal. "
-                        f"SL ref: swing low {last_swing_low['price']:.2f}."
-                    ),
-                )
-
-        # Bearish ChoCh: bullish trend, but price breaks last swing low
+        # ChoCh Bearish
         if trend == 'bullish' and last_swing_low:
             level = last_swing_low['price']
             body_close_below = current.close < level and max(current.open, current.close) < level * 1.002
             wick_only = current.low < level and min(current.open, current.close) >= level
-
             if body_close_below and not wick_only:
                 confidence = 0.60
-
-                if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.3:
-                    confidence += 0.12
-
-                if current.body_size > current.range_size * 0.6:
-                    confidence += 0.08
-
-                if indicators.rsi_14 and indicators.rsi_14 < 50:
-                    confidence += 0.05
-
-                # ChoCh SL: behind the last swing high + 1.5 ATR (wider for reversals)
+                if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20 * 1.3: confidence += 0.12
+                if current.body_size > current.range_size * 0.6: confidence += 0.08
+                if indicators.rsi_14 and indicators.rsi_14 < 50: confidence += 0.05
                 sl_price = round(last_swing_high['price'] + (1.5 * atr), 8) if atr > 0 else None
-
-                return SetupSignal(
-                    strategy_name=self.name,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    direction="SHORT",
-                    confidence=min(confidence, 1.0),
-                    entry=current.close,
-                    sl=sl_price,
-                    notes=(
-                        f"Bearish ChoCh: body broke below swing low at {level:.2f} "
-                        f"against prevailing bullish trend. Potential reversal. "
-                        f"SL ref: swing high {last_swing_high['price']:.2f}."
-                    ),
-                )
-
+                return SetupSignal(strategy_name=self.name, symbol=symbol, timeframe=timeframe,
+                                   direction="SHORT", confidence=min(confidence, 1.0),
+                                   entry=current.close, sl=sl_price,
+                                   notes=f"Bearish ChoCh: body broke below swing low at {level:.2f} against bullish trend.")
         return None
 
     def calculate_sl(self, signal, candles, atr):
-        """Structural SL: Uses the swing-level SL attached at scan time.
-        Falls back to 3-candle pivot + 1.0 ATR if signal.sl was not set."""
-        if signal.sl is not None:
-            return signal.sl
-
-        # Fallback: structural pivot + 1.0 ATR buffer
-        if signal.direction == "LONG":
-            recent_low = min(c.low for c in candles[-5:])
-            return round(recent_low - (1.0 * atr), 8)
-        else:
-            recent_high = max(c.high for c in candles[-5:])
-            return round(recent_high + (1.0 * atr), 8)
+        if signal.sl is not None: return signal.sl
+        if signal.direction == "LONG": return round(min(c.low for c in candles[-5:]) - (1.0 * atr), 8)
+        else: return round(max(c.high for c in candles[-5:]) + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr, sr_zones=None):
-        """Risk-based TP: 2.0R and 4.0R from structural stop."""
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)
-        risk = abs(entry - sl)
-        risk = max(risk, atr * 0.1)
-        if signal.direction == "LONG":
-            return (round(entry + (2.0 * risk), 8), round(entry + (4.0 * risk), 8))
-        else:
-            return (round(entry - (2.0 * risk), 8), round(entry - (4.0 * risk), 8))
+        risk = max(abs(entry - sl), atr * 0.1)
+        if signal.direction == "LONG": return (round(entry + (2.0 * risk), 8), round(entry + (4.0 * risk), 8))
+        else: return (round(entry - (2.0 * risk), 8), round(entry - (4.0 * risk), 8))
 
     def should_confirm_with_llm(self, signal):
         return True

@@ -1,287 +1,270 @@
 """
-Institutional Order Block (OB) Retest Strategy v3.3 — Production Edition
+Institutional Order Block (OB) Retest Strategy v4.0 — Confluence Engine Edition
 
-Smart Money Concept focusing on institutional accumulation/distribution zones
-with realistic market microstructure gating:
-  1. OB Identification   — Variable-length impulse, 1.5x ATR normalized displacement
-  2. Displacement Proof  — Break of Structure (Hard Gate) + FVG (Soft Gate / Confidence)
-  3. Retest Phase        — OB mitigation tracking (only first-touch zones)
-  4. Trigger Confirmation— 0.5x wick rejection + candle-close momentum + Defense line intact
-  5. Risk Management     — Strict MIN_RR gates and MAX_RISK caps
+Phase 2 rewrite: Pure logic gates and confidence scoring.
+All mathematical OB/FVG/BOS/ChoCh detection delegated to app/core/ extraction layer.
 
-Bullish OB: The last down candle before a significant bullish impulse.
-Bearish OB: The last up candle before a significant bearish impulse.
+Signal generation:
+  Base requirement: OB active + price in zone (2 hard gates, down from 7)
+  Additive modifiers: FVG presence, RSI room, volume confirmation, recent ChoCh/BOS,
+                       wick quality, impulse strength (confidence breaks 0.70 threshold)
 
-Changelog v3.2 → v3.3:
-  - FIX: Restored _in_cooldown with correct logic (suppress re-fire, not fresh entry)
-  - FIX: _ob_is_mitigated now includes current candle in check window
-  - FIX: price_in_zone is now symmetric for both BULL and BEAR (high-wick check added for BULL)
-  - TUNE: FVG confidence boost reduced from 0.15 → 0.10 to prevent single-factor dominance
+Confidence budget design:
+  Base (must pass):    0.50  (OB active + price in zone)
+  Primary confluence:  0.18  (FVG overlap) 
+  Secondary:           0.12  (RSI momentum room)
+  Tertiary:            0.08  (volume, ChoCh/BOS recent)
+  Minor:               0.05  (wick quality, impulse strength)
+  Threshold:           0.70  (requires base + at least 1 primary or 2 secondary)
+
+The legacy scan() method is preserved for backward compatibility.
 """
 
+import numpy as np
+import pandas as pd
+from typing import Optional
+
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from app.core.base_strategy import safe_lt, safe_gt, safe_between
 from app.core.fractals import find_fractal_points
 
 
 class OrderBlockRetestStrategy(BaseStrategy):
     name = "Order Block Retest"
     description = (
-        "Detects institutional OB retests gated by realistic ATR displacement, "
-        "structural BOS confirmation, and dynamic Risk/Reward targeting."
+        "Detects institutional OB retests with confluence scoring: "
+        "OB active + FVG + ChoCh/BOS + RSI + volume + wick quality."
     )
     timeframes = ["1h", "4h", "1d"]
-    version = "3.3"
-    min_confidence = 0.60
+    version = "4.0"
+    min_confidence = 0.70
 
-    # ── Configuration ──────────────────────────────────────────────
-    LOOKBACK = 20               # How far back to search for OB candidates
-    MAX_IMPULSE_LEN = 5         # Maximum consecutive impulse candles
-    MIN_IMPULSE_LEN = 2         # Minimum consecutive impulse candles
-    ATR_DISPLACEMENT = 1.5      # Realistic institutional displacement (1.5x ATR)
-    BOS_LOOKBACK = 15           # Candles before OB to find prior swing for BOS
-    PIVOT_BARS = 3              # Fractal pivot detection window for TP targets
-    TP_FRACTAL_LOOKBACK = 40    # How many candles to search for liquidity pools
+    # ── Phase 2: Feature Declaration ──
+    required_features = ['ob', 'fvg', 'choch', 'bos', 'rsi', 'ema', 'atr', 'volume_ma']
+    feature_config = {
+        'rsi_period': 14,
+        'ema_periods': [200],
+        'atr_period': 14,
+        'volume_ma_period': 20,
+    }
 
-    # ── Risk & Filter Configuration ────────────────────────────────
-    MIN_RR = 1.5                # Absolute minimum Risk/Reward ratio allowed
-    MAX_RISK_ATR = 2.5          # Reject OBs that are too wide (Risk > 2.5x ATR)
-    STRICT_HTF_ALIGNMENT = True # If True, strictly bans counter-trend setups
+    # ── Risk config (preserved from v3.3) ──
+    MAX_RISK_ATR = 2.5
+    TP_FRACTAL_LOOKBACK = 40
+    PIVOT_BARS = 3
 
-    # ── Cooldown Configuration ─────────────────────────────────────
-    # Suppresses re-firing if price has been dwelling inside the zone
-    # for too many candles already (prolonged consolidation, not a fresh retest).
+    # ── Phase 2: Weighted Scoring Matrix ──
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Confluence scoring for OB retest.
+
+        Hard gates (must pass):
+          - OB active (ob_active == True)
+          - Price in OB zone (low or close or high between ob_lower and ob_upper)
+
+        Additive modifiers:
+          - FVG active and overlapping (+0.18)
+          - RSI < 55 for longs or RSI > 45 for shorts (+0.12)
+          - Volume above MA (+0.08)
+          - Recent bullish/bearish ChoCh or BOS (+0.08)
+          - Wick quality: lower wick > 0.5 * body (LONG) or upper wick > 0.5 * body (SHORT) (+0.05)
+          - Impulse strength proxy: ATR > 0 and zone width < 2*ATR (+0.05)
+        """
+        # ── Hard Gate 1: OB active ──
+        ob_active = df['ob_active'].notna() & (df['ob_active'] == True)
+
+        # ── Hard Gate 2: Price in OB zone ──
+        ob_upper_ok = df['ob_upper'].notna()
+        ob_lower_ok = df['ob_lower'].notna()
+        price_in_zone = (
+            ob_upper_ok & ob_lower_ok &
+            (
+                ((df['low'] >= df['ob_lower']) & (df['low'] <= df['ob_upper'])) |
+                ((df['close'] >= df['ob_lower']) & (df['close'] <= df['ob_upper'])) |
+                ((df['high'] >= df['ob_lower']) & (df['high'] <= df['ob_upper']))
+            )
+        )
+
+        base_setup = ob_active & price_in_zone
+
+        # ── Direction from OB direction ──
+        ob_bullish = df['ob_direction'].notna() & (df['ob_direction'] == 'bullish')
+        ob_bearish = df['ob_direction'].notna() & (df['ob_direction'] == 'bearish')
+
+        # ── Base confidence ──
+        df['confidence'] = np.where(base_setup, 0.50, 0.0)
+        df['conf_base'] = df['confidence'].copy()
+
+        # ── Modifier: FVG overlap ──
+        fvg_active = df['fvg_active'].notna() & (df['fvg_active'] == True)
+        fvg_overlap = (
+            fvg_active &
+            df['fvg_lower'].notna() & df['ob_upper'].notna() &
+            (df['fvg_lower'] <= df['ob_upper']) &
+            (df['fvg_upper'] >= df['ob_lower'])
+        )
+        df['conf_fvg'] = np.where(base_setup & fvg_overlap, 0.18, 0.0)
+        df['confidence'] += df['conf_fvg']
+
+        # ── Modifier: RSI momentum room ──
+        rsi_ok = df['rsi'].notna() & (
+            (ob_bullish & (df['rsi'] < 55)) |
+            (ob_bearish & (df['rsi'] > 45))
+        )
+        df['conf_rsi'] = np.where(base_setup & rsi_ok, 0.12, 0.0)
+        df['confidence'] += df['conf_rsi']
+
+        # ── Modifier: Volume confirmation ──
+        vol_ok = df['volume_ma'].notna() & (df['volume'] > df['volume_ma'])
+        df['conf_vol'] = np.where(base_setup & vol_ok, 0.08, 0.0)
+        df['confidence'] += df['conf_vol']
+
+        # ── Modifier: Recent structural event ──
+        choch_bull = df.get('event_choch_bullish_recent', pd.Series(False, index=df.index))
+        choch_bear = df.get('event_choch_bearish_recent', pd.Series(False, index=df.index))
+        bos_bull = df.get('event_bos_bullish_recent', pd.Series(False, index=df.index))
+        bos_bear = df.get('event_bos_bearish_recent', pd.Series(False, index=df.index))
+        recent_structure = (
+            (ob_bullish & ((choch_bull == True) | (bos_bull == True))) |
+            (ob_bearish & ((choch_bear == True) | (bos_bear == True)))
+        )
+        df['conf_structure'] = np.where(base_setup & recent_structure, 0.08, 0.0)
+        df['confidence'] += df['conf_structure']
+
+        # ── Modifier: Wick quality ──
+        body = (df['close'] - df['open']).abs()
+        lower_wick = np.minimum(df['open'], df['close']) - df['low']
+        upper_wick = df['high'] - np.maximum(df['open'], df['close'])
+        wick_ok = (
+            (ob_bullish & (body > 0) & (lower_wick > 0.5 * body)) |
+            (ob_bearish & (body > 0) & (upper_wick > 0.5 * body))
+        )
+        df['conf_wick'] = np.where(base_setup & wick_ok, 0.05, 0.0)
+        df['confidence'] += df['conf_wick']
+
+        # ── Modifier: Impulse strength (zone compactness) ──
+        atr_ok = df['atr'].notna() & (df['atr'] > 0)
+        zone_compact = atr_ok & ob_upper_ok & ob_lower_ok & (
+            (df['ob_upper'] - df['ob_lower']) < 2 * df['atr']
+        )
+        df['conf_zone'] = np.where(base_setup & zone_compact, 0.05, 0.0)
+        df['confidence'] += df['conf_zone']
+
+        # ── Trigger ──
+        df['signal'] = np.where(df['confidence'] >= self.min_confidence, 1, 0)
+
+        # ── Direction ──
+        df['direction'] = None
+        df.loc[(df['signal'] == 1) & ob_bullish, 'direction'] = 'LONG'
+        df.loc[(df['signal'] == 1) & ob_bearish, 'direction'] = 'SHORT'
+
+        return df
+
+    # ── Legacy scan() — preserved for backward compatibility ──
+
+    LOOKBACK = 20
+    MAX_IMPULSE_LEN = 5
+    MIN_IMPULSE_LEN = 2
+    ATR_DISPLACEMENT = 1.5
+    BOS_LOOKBACK = 15
+    MIN_RR = 1.5
+    STRICT_HTF_ALIGNMENT = True
     COOLDOWN_CANDLES = 5
 
-    # ── Unified FVG Detection (Soft Gate) ─────────────────────────
-    def _find_fvg(
-        self,
-        candles: list[Candle],
-        impulse_start: int,
-        impulse_end: int,
-        direction: str,
-    ) -> dict | None:
+    def _find_fvg(self, candles, impulse_start, impulse_end, direction):
         upper_bound = min(impulse_end + 1, len(candles))
-
         for j in range(impulse_start + 2, upper_bound):
             c_before = candles[j - 2]
             c_after = candles[j]
-
             if direction == "BULL" and c_after.low > c_before.high:
                 fvg_top = c_after.low
                 fvg_bottom = c_before.high
                 for k in range(j + 1, len(candles) - 1):
-                    if candles[k].low <= fvg_bottom:
-                        break
-                else:
-                    return {"top": fvg_top, "bottom": fvg_bottom, "index": j}
-
+                    if candles[k].low <= fvg_bottom: break
+                else: return {"top": fvg_top, "bottom": fvg_bottom, "index": j}
             elif direction == "BEAR" and c_after.high < c_before.low:
                 fvg_top = c_before.low
                 fvg_bottom = c_after.high
                 for k in range(j + 1, len(candles) - 1):
-                    if candles[k].high >= fvg_top:
-                        break
-                else:
-                    return {"top": fvg_top, "bottom": fvg_bottom, "index": j}
-
+                    if candles[k].high >= fvg_top: break
+                else: return {"top": fvg_top, "bottom": fvg_bottom, "index": j}
         return None
 
-    # ── Break of Structure Detection (Hard Gate) ───────────────────
-    def _has_bos(
-        self,
-        candles: list[Candle],
-        ob_index: int,
-        impulse_end: int,
-        direction: str,
-    ) -> bool:
+    def _has_bos(self, candles, ob_index, impulse_end, direction):
         lookback_start = max(0, ob_index - self.BOS_LOOKBACK)
-        if lookback_start >= ob_index:
-            return False
-
+        if lookback_start >= ob_index: return False
         prior_candles = candles[lookback_start:ob_index]
-        if not prior_candles:
-            return False
-
-        impulse_candles = candles[ob_index + 1 : impulse_end + 1]
-        if not impulse_candles:
-            return False
-
+        impulse_candles = candles[ob_index + 1: impulse_end + 1]
+        if not prior_candles or not impulse_candles: return False
         if direction == "BULL":
-            prior_high = max(c.high for c in prior_candles)
-            impulse_high = max(c.high for c in impulse_candles)
-            return impulse_high > prior_high
+            return max(c.high for c in impulse_candles) > max(c.high for c in prior_candles)
         else:
-            prior_low = min(c.low for c in prior_candles)
-            impulse_low = min(c.low for c in impulse_candles)
-            return impulse_low < prior_low
+            return min(c.low for c in impulse_candles) < min(c.low for c in prior_candles)
 
-    # ── OB Mitigation Check ────────────────────────────────────────
-    # FIX v3.3: Upper bound is now len(candles) (inclusive of current candle)
-    # so that a candle between impulse_end and current that closed through
-    # the zone is not silently skipped — this was a blind spot for recent OBs.
-    def _ob_is_mitigated(
-        self,
-        candles: list[Candle],
-        impulse_end: int,
-        ob_low: float,
-        ob_high: float,
-        direction: str,
-    ) -> bool:
+    def _ob_is_mitigated(self, candles, impulse_end, ob_low, ob_high, direction):
         for k in range(impulse_end + 1, len(candles)):
             c = candles[k]
-            if direction == "BULL":
-                if c.close < ob_low:
-                    return True
-            else:
-                if c.close > ob_high:
-                    return True
+            if direction == "BULL" and c.close < ob_low: return True
+            if direction == "BEAR" and c.close > ob_high: return True
         return False
 
-    # ── Cooldown Check ─────────────────────────────────────────────
-    # FIX v3.3: Replaces the removed/inverted cooldown from v3.2.
-    # Logic: Count how many candles AFTER the impulse have been inside the zone.
-    # If price has been dwelling there for >= COOLDOWN_CANDLES, this is no longer
-    # a fresh retest — it's consolidation. Suppress the signal.
-    # This does NOT block a fresh entry because a prior wick touched the zone
-    # (the original v3.1 bug). It only fires after sustained zone presence.
-    def _in_cooldown(
-        self,
-        candles: list[Candle],
-        impulse_end: int,
-        ob_low: float,
-        ob_high: float,
-    ) -> bool:
+    def _in_cooldown(self, candles, impulse_end, ob_low, ob_high):
         candles_in_zone = 0
-        # Check all candles between impulse end and current (exclusive of current)
-        for c in candles[impulse_end + 1 : -1]:
-            # A candle is "in zone" if any part of its body overlaps the OB
+        for c in candles[impulse_end + 1: -1]:
             body_top = max(c.open, c.close)
             body_bottom = min(c.open, c.close)
-            overlaps_zone = body_top >= ob_low and body_bottom <= ob_high
-            if overlaps_zone:
+            if body_top >= ob_low and body_bottom <= ob_high:
                 candles_in_zone += 1
-                if candles_in_zone >= self.COOLDOWN_CANDLES:
-                    return True
+                if candles_in_zone >= self.COOLDOWN_CANDLES: return True
         return False
 
-    # ── Main Scan ──────────────────────────────────────────────────
-    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
-        if len(candles) < self.LOOKBACK + self.MAX_IMPULSE_LEN + 5:
-            return None
-
-        if indicators.atr_14 is None:
-            return None
-
-        current = candles[-1]
-
-        # Exhaustion Guard
-        if current.body_size > 2 * indicators.atr_14:
-            return None
-
-        # HTF Trend Alignment (SMA-20 baseline)
-        htf_bias = None
-        if htf_candles and len(htf_candles) >= 20:
-            htf_baseline = sum(c.close for c in htf_candles[-20:]) / 20
-            htf_bias = "BULL" if htf_candles[-1].close > htf_baseline else "BEAR"
-
-        # Scan boundary: use MIN_IMPULSE_LEN so most-recent OBs are reachable.
-        # _evaluate_ob_candidate handles the actual impulse length validation.
-        scan_start = max(0, len(candles) - self.LOOKBACK)
-        scan_end = len(candles) - self.MIN_IMPULSE_LEN - 1
-
-        for i in range(scan_start, scan_end):
-            for direction in ("BULL", "BEAR"):
-                signal = self._evaluate_ob_candidate(
-                    candles, indicators, i, direction,
-                    symbol, timeframe, current, htf_bias,
-                )
-                if signal is not None:
-                    return signal
-
-        return None
-
-    def _evaluate_ob_candidate(
-        self,
-        candles: list[Candle],
-        indicators: Indicators,
-        ob_idx: int,
-        direction: str,
-        symbol: str,
-        timeframe: str,
-        current: Candle,
-        htf_bias: str | None,
-    ) -> SetupSignal | None:
-
+    def _evaluate_ob_candidate(self, candles, indicators, ob_idx, direction,
+                                symbol, timeframe, current, htf_bias):
         ob_candle = candles[ob_idx]
-
         if direction == "BULL" and not ob_candle.is_bearish: return None
         if direction == "BEAR" and not ob_candle.is_bullish: return None
 
-        # Find Variable-Length Impulse
         impulse_candles = []
         for j in range(ob_idx + 1, min(ob_idx + 1 + self.MAX_IMPULSE_LEN, len(candles) - 1)):
             c = candles[j]
-            if direction == "BULL" and c.is_bullish:
-                impulse_candles.append(c)
-            elif direction == "BEAR" and c.is_bearish:
-                impulse_candles.append(c)
-            else:
-                break
+            if direction == "BULL" and c.is_bullish: impulse_candles.append(c)
+            elif direction == "BEAR" and c.is_bearish: impulse_candles.append(c)
+            else: break
 
-        if len(impulse_candles) < self.MIN_IMPULSE_LEN:
-            return None
+        if len(impulse_candles) < self.MIN_IMPULSE_LEN: return None
 
         impulse_end_idx = ob_idx + len(impulse_candles)
-
-        # ATR-Normalized Displacement
         if direction == "BULL":
             impulse_size = impulse_candles[-1].close - impulse_candles[0].open
         else:
             impulse_size = impulse_candles[0].open - impulse_candles[-1].close
 
-        if impulse_size < indicators.atr_14 * self.ATR_DISPLACEMENT:
+        if indicators.atr_14 and impulse_size < indicators.atr_14 * self.ATR_DISPLACEMENT:
             return None
 
-        # BOS Validation (Hard Gate)
-        if not self._has_bos(candles, ob_idx, impulse_end_idx, direction):
-            return None
+        if not self._has_bos(candles, ob_idx, impulse_end_idx, direction): return None
 
-        # FVG Detection (Soft Gate — confidence only)
         fvg = self._find_fvg(candles, ob_idx + 1, impulse_end_idx, direction)
-
         ob_high, ob_low = ob_candle.high, ob_candle.low
 
-        # Mitigation Check (v3.3: includes current candle in window)
-        if self._ob_is_mitigated(candles, impulse_end_idx, ob_low, ob_high, direction):
-            return None
+        if self._ob_is_mitigated(candles, impulse_end_idx, ob_low, ob_high, direction): return None
+        if self._in_cooldown(candles, impulse_end_idx, ob_low, ob_high): return None
 
-        # Cooldown Check (v3.3: restored with correct dwell-time logic)
-        if self._in_cooldown(candles, impulse_end_idx, ob_low, ob_high):
-            return None
-
-        # Is Price in the OB Zone?
-        # FIX v3.3: Symmetric for both directions — BULL now also checks high-wick
-        # entry from above (candle high touches zone but close/low may be above it).
         price_in_zone = (
-            (ob_low <= current.low   <= ob_high)
-            or (ob_low <= current.close <= ob_high)
-            or (ob_low <= current.high  <= ob_high)  # symmetric: covers wick-touch for both
+            (ob_low <= current.low <= ob_high) or
+            (ob_low <= current.close <= ob_high) or
+            (ob_low <= current.high <= ob_high)
         )
-        if not price_in_zone:
-            return None
+        if not price_in_zone: return None
 
-        # Institutional Defense Line:
-        # Price may sweep below mid (that's the retest), but must not CLOSE
-        # beyond the absolute OB boundary — that confirms invalidation.
         if direction == "BULL" and current.close < ob_low: return None
         if direction == "BEAR" and current.close > ob_high: return None
 
-        # HTF Strict Alignment
         if self.STRICT_HTF_ALIGNMENT and htf_bias:
             if direction == "BULL" and htf_bias == "BEAR": return None
             if direction == "BEAR" and htf_bias == "BULL": return None
 
-        # Wick & Momentum Validation (0.5x body minimum)
         if direction == "BULL" and current.lower_wick < current.body_size * 0.5: return None
         if direction == "BEAR" and current.upper_wick < current.body_size * 0.5: return None
 
@@ -289,129 +272,91 @@ class OrderBlockRetestStrategy(BaseStrategy):
         if direction == "BULL" and current.close <= candle_mid: return None
         if direction == "BEAR" and current.close >= candle_mid: return None
 
-        # Risk Calculation
         trade_direction = "LONG" if direction == "BULL" else "SHORT"
+        atr = indicators.atr_14 or 0
 
-        if direction == "BULL":
-            sl = round(ob_low - (0.5 * indicators.atr_14), 8)
-        else:
-            sl = round(ob_high + (0.5 * indicators.atr_14), 8)
+        if direction == "BULL": sl = round(ob_low - (0.5 * atr), 8)
+        else: sl = round(ob_high + (0.5 * atr), 8)
 
         entry = current.close
         risk = abs(entry - sl)
+        if atr > 0 and risk > atr * self.MAX_RISK_ATR: return None
+        risk = max(risk, atr * 0.1)
 
-        # Hard cap: reject massive volatility zones
-        if risk > indicators.atr_14 * self.MAX_RISK_ATR:
-            return None
+        tp1, tp2 = self._compute_structural_tp(candles, entry, sl, risk, direction, atr)
+        projected_rr = abs(tp1 - entry) / risk if risk > 0 else 0
 
-        risk = max(risk, indicators.atr_14 * 0.1)
-
-        # Target Selection
-        # Note: MIN_RR is enforced structurally inside _compute_structural_tp.
-        # The fallback returns exactly MIN_RR * risk, so no outer gate is needed.
-        tp1, tp2 = self._compute_structural_tp(
-            candles, entry, sl, risk, direction, indicators.atr_14
-        )
-
-        projected_rr = abs(tp1 - entry) / risk
-
-        # Confidence Scoring
-        # FIX v3.3: FVG boost reduced from 0.15 → 0.10 to prevent single-factor dominance.
-        # At +0.15, a setup with only FVG + base (0.55) clears min_confidence (0.60)
-        # without any volume, RSI, or impulse confirmation — too permissive.
         confidence = 0.55
-
-        if fvg:                                                                   confidence += 0.10
+        if fvg: confidence += 0.10
         if direction == "BULL" and indicators.rsi_14 and indicators.rsi_14 < 55: confidence += 0.08
         if direction == "BEAR" and indicators.rsi_14 and indicators.rsi_14 > 45: confidence += 0.08
-        if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20:  confidence += 0.08
-        if len(impulse_candles) >= 3:                                             confidence += 0.05
-
+        if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20: confidence += 0.08
+        if len(impulse_candles) >= 3: confidence += 0.05
         confidence = min(max(confidence, 0.0), 1.0)
-        if confidence < self.min_confidence:
-            return None
+        if confidence < self.min_confidence: return None
 
         fvg_text = f"FVG: {fvg['bottom']:.2f}-{fvg['top']:.2f}. " if fvg else "No FVG (soft gate). "
 
         return SetupSignal(
-            strategy_name=self.name,
-            symbol=symbol,
-            timeframe=timeframe,
-            direction=trade_direction,
-            confidence=round(confidence, 4),
-            entry=entry,
-            sl=sl,
-            tp1=tp1,
-            tp2=tp2,
+            strategy_name=self.name, symbol=symbol, timeframe=timeframe,
+            direction=trade_direction, confidence=round(confidence, 4),
+            entry=entry, sl=sl, tp1=tp1, tp2=tp2,
             notes=(
                 f"{'Bullish' if direction == 'BULL' else 'Bearish'} OB retest. "
-                f"OB zone: {ob_low:.2f}-{ob_high:.2f}. "
-                f"{fvg_text}"
-                f"Proj. RR: {projected_rr:.2f}R. "
-                f"HTF bias: {htf_bias or 'N/A'}."
+                f"OB zone: {ob_low:.2f}-{ob_high:.2f}. {fvg_text}"
+                f"Proj. RR: {projected_rr:.2f}R. HTF bias: {htf_bias or 'N/A'}."
             ),
         )
 
-    # ── Structural TP Targeting ────────────────────────────────────
-    def _compute_structural_tp(
-        self,
-        candles: list[Candle],
-        entry: float,
-        sl: float,
-        risk: float,
-        direction: str,
-        atr: float,
-    ) -> tuple[float, float]:
+    def _compute_structural_tp(self, candles, entry, sl, risk, direction, atr):
         window_start = max(0, len(candles) - self.TP_FRACTAL_LOOKBACK)
         window = candles[window_start:]
-
+        fractal_highs, fractal_lows = [], []
         if len(window) > self.PIVOT_BARS * 2 + 1:
             fractal_highs, fractal_lows = find_fractal_points(
                 window[: -self.PIVOT_BARS], self.PIVOT_BARS
             )
-        else:
-            fractal_highs, fractal_lows = [], []
-
         if direction == "BULL" and fractal_highs:
             above = sorted([lvl for _, lvl in fractal_highs if lvl > entry])
-            valid_targets = [lvl for lvl in above if (lvl - entry) / risk >= self.MIN_RR]
-
-            if valid_targets:
-                tp1 = round(valid_targets[0], 8)
-                tp2 = round(valid_targets[-1], 8) if len(valid_targets) > 1 else round(entry + 3.0 * risk, 8)
-                return (tp1, tp2)
-
+            valid = [lvl for lvl in above if (lvl - entry) / risk >= self.MIN_RR]
+            if valid: return (round(valid[0], 8), round(valid[-1], 8) if len(valid) > 1 else round(entry + 3.0 * risk, 8))
         if direction == "BEAR" and fractal_lows:
             below = sorted([lvl for _, lvl in fractal_lows if lvl < entry], reverse=True)
-            valid_targets = [lvl for lvl in below if (entry - lvl) / risk >= self.MIN_RR]
+            valid = [lvl for lvl in below if (entry - lvl) / risk >= self.MIN_RR]
+            if valid: return (round(valid[0], 8), round(valid[-1], 8) if len(valid) > 1 else round(entry - 3.0 * risk, 8))
+        if direction == "BULL": return (round(entry + (self.MIN_RR * risk), 8), round(entry + (3.0 * risk), 8))
+        else: return (round(entry - (self.MIN_RR * risk), 8), round(entry - (3.0 * risk), 8))
 
-            if valid_targets:
-                tp1 = round(valid_targets[0], 8)
-                tp2 = round(valid_targets[-1], 8) if len(valid_targets) > 1 else round(entry - 3.0 * risk, 8)
-                return (tp1, tp2)
+    def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
+        if len(candles) < self.LOOKBACK + self.MAX_IMPULSE_LEN + 5: return None
+        if indicators.atr_14 is None: return None
+        current = candles[-1]
+        if current.body_size > 2 * indicators.atr_14: return None
+        htf_bias = None
+        if htf_candles and len(htf_candles) >= 20:
+            htf_baseline = sum(c.close for c in htf_candles[-20:]) / 20
+            htf_bias = "BULL" if htf_candles[-1].close > htf_baseline else "BEAR"
+        scan_start = max(0, len(candles) - self.LOOKBACK)
+        scan_end = len(candles) - self.MIN_IMPULSE_LEN - 1
+        for i in range(scan_start, scan_end):
+            for direction in ("BULL", "BEAR"):
+                signal = self._evaluate_ob_candidate(candles, indicators, i, direction,
+                                                      symbol, timeframe, current, htf_bias)
+                if signal is not None: return signal
+        return None
 
-        # Fallback: strict R-multiples if no structural fractals qualify
-        if direction == "BULL":
-            return (round(entry + (self.MIN_RR * risk), 8), round(entry + (3.0 * risk), 8))
-        else:
-            return (round(entry - (self.MIN_RR * risk), 8), round(entry - (3.0 * risk), 8))
-
-    # ── SL/TP Fallbacks (getters for the engine) ──────────────────
     def calculate_sl(self, signal, candles, atr):
-        if hasattr(signal, 'sl') and signal.sl is not None:
-            return signal.sl
-        if signal.direction == "LONG": return round(candles[-1].low - (1.0 * atr), 8)
-        else: return round(candles[-1].high + (1.0 * atr), 8)
+        if signal.sl is not None: return signal.sl
+        if signal.direction == "LONG": return round(min(c.low for c in candles[-3:]) - (1.0 * atr), 8)
+        else: return round(max(c.high for c in candles[-3:]) + (1.0 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr, sr_zones=None):
-        if hasattr(signal, 'tp1') and signal.tp1 is not None and hasattr(signal, 'tp2') and signal.tp2 is not None:
-            return (signal.tp1, signal.tp2)
-
+        if signal.tp1 is not None and signal.tp2 is not None: return (signal.tp1, signal.tp2)
         entry = signal.entry or candles[-1].close
         sl = self.calculate_sl(signal, candles, atr)
         risk = max(abs(entry - sl), atr * 0.1)
         if signal.direction == "LONG": return (round(entry + 1.5 * risk, 8), round(entry + 3.0 * risk, 8))
         else: return (round(entry - 1.5 * risk, 8), round(entry - 3.0 * risk, 8))
 
-    def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
+    def should_confirm_with_llm(self, signal):
         return True

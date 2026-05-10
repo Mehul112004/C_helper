@@ -145,8 +145,15 @@ class LLMQueueManager:
                 # Cleanup: keep only last 1000
                 count = db.session.query(LLMPromptLog).count()
                 if count > 1000:
-                    subq = db.session.query(LLMPromptLog.id).order_by(LLMPromptLog.id.desc()).offset(1000).subquery()
-                    db.session.query(LLMPromptLog).filter(LLMPromptLog.id.in_(subq)).delete(synchronize_session=False)
+                    subq = (
+                        db.session.query(LLMPromptLog.id)
+                        .order_by(LLMPromptLog.id.desc())
+                        .offset(1000)
+                        .subquery()
+                    )
+                    db.session.query(LLMPromptLog).filter(
+                        LLMPromptLog.id.in_(db.select(subq.c.id))
+                    ).delete(synchronize_session=False)
                     db.session.commit()
             except Exception as e:
                 logger.error(f"Failed to log LLM prompt: {e}")

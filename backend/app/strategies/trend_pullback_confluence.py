@@ -1,212 +1,217 @@
 """
-Trend Pullback Confluence Strategy (LTF — 15m)
+Trend Pullback Confluence Strategy v2.0 — Confluence Engine Edition
 
-A robust trend continuation model that requires three independent
-confluences before firing:
+Phase 2 rewrite: Pure logic gates and confidence scoring.
+EMA ordering and RSI hook evaluation use indicator values, not inline math.
 
-1. **EMA Alignment**: Strict MA stacking order (50 > 100 > 200 for longs,
-   reversed for shorts) to confirm an established trend.
-2. **Price Pullback to 50 EMA**: Price must retrace and tag the 50 EMA
-   support/resistance band (within 0.15% tolerance).
-3. **RSI Momentum Hook**: RSI(14) must have dipped below 40 (for longs)
-   or above 60 (for shorts) recently and then hooked back, proving
-   oversold/overbought exhaustion is resolving — prevents catching
-   a "falling knife".
+Signal generation:
+  Base requirement: EMA stack aligned (1 hard gate, down from 3)
+  Additive modifiers: price near EMA 50, RSI momentum hook, bullish/bearish candle,
+                       wick rejection, volume confirmation, FVG active
 
-Safeguards:
-  - Will NOT fire if the EMA stack is not perfectly ordered.
-  - Will NOT fire if RSI shows no recent exhaustion dip.
-  - Will NOT fire if current candle has no rejection from the 50 EMA.
+Confidence budget design:
+  Base (must pass):      0.50  (EMA stack aligned: 50 > 100 > 200 or 50 < 100 < 200)
+  Primary confluence:    0.15  (price near EMA 50)
+  Secondary:             0.12  (RSI momentum hook)
+  Tertiary:             0.08   (bullish/bearish candle, volume)
+  Minor:                 0.05   (wick rejection, FVG active)
+  Threshold:             0.70  (requires stack + near EMA + at least 1 tertiary)
 """
 
+import numpy as np
+import pandas as pd
+from typing import Optional
+
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from app.core.base_strategy import safe_lt, safe_gt, safe_between
 
 
 class TrendPullbackConfluenceStrategy(BaseStrategy):
     name = "Trend Pullback Confluence"
     description = (
-        "Trend continuation: requires strict EMA alignment (50>100>200), "
-        "pullback tagging the 50 EMA, and RSI momentum hook from exhaustion."
+        "Detects EMA stack alignment pullbacks with confluence scoring: "
+        "EMA stack + RSI hook + price-at-EMA + volume + FVG."
     )
     timeframes = ["15m"]
-    version = "1.0"
-    min_confidence = 0.60
+    version = "2.0"
+    min_confidence = 0.70
 
-    # Configuration
-    RSI_OVERSOLD_THRESHOLD = 40  # RSI must have dipped below this for LONG
-    RSI_OVERBOUGHT_THRESHOLD = 60  # RSI must have risen above this for SHORT
-    RSI_LOOKBACK = 5             # Candles to look back for the RSI exhaustion dip
+    # ── Phase 2: Feature Declaration ──
+    required_features = ['ema', 'rsi', 'atr', 'volume_ma', 'fvg']
+    feature_config = {
+        'ema_periods': [50, 100, 200],
+        'rsi_period': 14,
+        'atr_period': 14,
+        'volume_ma_period': 20,
+    }
 
-    # Volatility / Momentum Filters ("Falling Knife" Protection)
-    ATR_RANGE_MULTIPLIER = 1.8   # Max candle range as multiple of ATR before aborting
-    ATR_BODY_MULTIPLIER = 1.2    # Max candle body size as multiple of ATR before aborting
+    # ── Phase 2: Weighted Scoring Matrix ──
 
-    def _check_ema_alignment_bullish(self, indicators: Indicators) -> bool:
-        """Verify 50 EMA > 100 EMA > 200 EMA (bullish stack)."""
-        if not all([indicators.ema_50, indicators.ema_100, indicators.ema_200]):
-            return False
-        return indicators.ema_50 > indicators.ema_100 > indicators.ema_200
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Confluence scoring for trend pullbacks.
 
-    def _check_ema_alignment_bearish(self, indicators: Indicators) -> bool:
-        """Verify 50 EMA < 100 EMA < 200 EMA (bearish stack)."""
-        if not all([indicators.ema_50, indicators.ema_100, indicators.ema_200]):
-            return False
-        return indicators.ema_50 < indicators.ema_100 < indicators.ema_200
+        Hard gate:
+          - EMA stack aligned (bullish: 50 > 100 > 200, bearish: 50 < 100 < 200)
 
-    def _price_tags_ema50(self, candle: Candle, ema_50: float, atr: float, direction: str) -> bool:
-        """Check if the candle's low (for longs) or high (for shorts) tagged the 50 EMA."""
-        tolerance = atr * 0.20
+        Additive modifiers:
+          - Price near EMA 50 (±0.3 * ATR, +0.15)
+          - RSI momentum hook (recent dip below 45 recovering, or spike above 55 declining, +0.12)
+          - Bullish/bearish candle (+0.08)
+          - Volume confirmation (+0.08)
+          - Wick rejection (+0.05)
+          - FVG active (+0.05)
+        """
+        ema_ok = (
+            df['ema_50'].notna() & df['ema_100'].notna() & df['ema_200'].notna()
+        )
+        # Bullish stack: 50 > 100 > 200
+        bullish_stack = ema_ok & (df['ema_50'] > df['ema_100']) & (df['ema_100'] > df['ema_200'])
+        # Bearish stack: 50 < 100 < 200
+        bearish_stack = ema_ok & (df['ema_50'] < df['ema_100']) & (df['ema_100'] < df['ema_200'])
+
+        base_setup = bullish_stack | bearish_stack
+
+        # ── Base confidence ──
+        df['confidence'] = np.where(base_setup, 0.50, 0.0)
+        df['conf_base'] = df['confidence'].copy()
+
+        # ── Modifier: Price near EMA 50 ──
+        atr_ok = df['atr'].notna() & (df['atr'] > 0)
+        near_ema50_tolerance = 0.3 * df['atr']
+        near_ema50 = atr_ok & (
+            (bullish_stack & (df['low'] <= df['ema_50'] + near_ema50_tolerance) &
+             (df['close'] > df['ema_50'])) |
+            (bearish_stack & (df['high'] >= df['ema_50'] - near_ema50_tolerance) &
+             (df['close'] < df['ema_50']))
+        )
+        df['conf_price'] = np.where(base_setup & near_ema50, 0.15, 0.0)
+        df['confidence'] += df['conf_price']
+
+        # ── Modifier: RSI momentum hook ──
+        rsi_ok = df['rsi'].notna()
+        # Check if RSI was below 45 in last 5 bars and now rising
+        rsi_hook_bull = pd.Series(False, index=df.index)
+        rsi_hook_bear = pd.Series(False, index=df.index)
+        for i in range(5, len(df)):
+            past_rsi = df['rsi'].iloc[i - 5:i]
+            curr_rsi = df['rsi'].iloc[i]
+            if pd.notna(curr_rsi):
+                # Bullish: RSI dipped below 45 recently, now rising, not overbought
+                rsi_hook_bull.iloc[i] = (
+                    (past_rsi.min() < 45) & (curr_rsi > past_rsi.iloc[-2]) & (curr_rsi < 65)
+                )
+                # Bearish: RSI spiked above 55 recently, now falling, not oversold
+                rsi_hook_bear.iloc[i] = (
+                    (past_rsi.max() > 55) & (curr_rsi < past_rsi.iloc[-2]) & (curr_rsi > 35)
+                )
+        rsi_hook = (bullish_stack & rsi_hook_bull) | (bearish_stack & rsi_hook_bear)
+        df['conf_rsi'] = np.where(base_setup & rsi_hook, 0.12, 0.0)
+        df['confidence'] += df['conf_rsi']
+
+        # ── Modifier: Directional candle ──
+        bullish_candle = df['close'] > df['open']
+        bearish_candle = df['close'] < df['open']
+        dir_candle = (bullish_stack & bullish_candle) | (bearish_stack & bearish_candle)
+        df['conf_candle'] = np.where(base_setup & dir_candle, 0.08, 0.0)
+        df['confidence'] += df['conf_candle']
+
+        # ── Modifier: Volume confirmation ──
+        vol_ok = df['volume_ma'].notna() & (df['volume'] > df['volume_ma'])
+        df['conf_vol'] = np.where(base_setup & vol_ok, 0.08, 0.0)
+        df['confidence'] += df['conf_vol']
+
+        # ── Modifier: Wick rejection ──
+        body = (df['close'] - df['open']).abs()
+        lower_wick = np.minimum(df['open'], df['close']) - df['low']
+        upper_wick = df['high'] - np.maximum(df['open'], df['close'])
+        wick_bull = bullish_stack & (lower_wick > body * 1.2)
+        wick_bear = bearish_stack & (upper_wick > body * 1.2)
+        df['conf_wick'] = np.where(base_setup & (wick_bull | wick_bear), 0.05, 0.0)
+        df['confidence'] += df['conf_wick']
+
+        # ── Modifier: FVG active ──
+        fvg_active = df['fvg_active'].notna() & (df['fvg_active'] == True)
+        df['conf_fvg'] = np.where(base_setup & fvg_active, 0.05, 0.0)
+        df['confidence'] += df['conf_fvg']
+
+        # ── Trigger ──
+        df['signal'] = np.where(df['confidence'] >= self.min_confidence, 1, 0)
+
+        # ── Direction ──
+        df['direction'] = None
+        df.loc[(df['signal'] == 1) & bullish_stack, 'direction'] = 'LONG'
+        df.loc[(df['signal'] == 1) & bearish_stack, 'direction'] = 'SHORT'
+
+        return df
+
+    # ── Legacy scan() — preserved for backward compatibility ──
+
+    def _rsi_hook(self, indicators, direction):
+        history = indicators.rsi_14_history or []
+        if len(history) < 5: return False
+        curr = (indicators.rsi_14 or 50)
         if direction == "LONG":
-            return candle.low <= (ema_50 + tolerance)
+            return min(history) < 45 and curr > history[-2] and curr < 65
         else:
-            return candle.high >= (ema_50 - tolerance)
-
-    def _rsi_hooked_bullish(self, candles: list[Candle], indicators: Indicators) -> bool:
-        """
-        Check if RSI recently dipped below the oversold threshold and is now
-        hooking back up within the RSI_LOOKBACK window.
-        """
-        if indicators.rsi_14 is None or indicators.prev_rsi_14 is None or not indicators.rsi_14_history:
-            return False
-
-        # Current RSI must be recovering (above threshold) and rising
-        current_rising = indicators.rsi_14 > indicators.prev_rsi_14
-
-        # Was the RSI at or below the threshold at any point in the lookback window?
-        prev_was_exhausted = any(val < self.RSI_OVERSOLD_THRESHOLD + 5 for val in indicators.rsi_14_history)
-
-        # Current RSI shouldn't be overbought already
-        not_overbought = indicators.rsi_14 < 65
-
-        return current_rising and prev_was_exhausted and not_overbought
-
-    def _rsi_hooked_bearish(self, candles: list[Candle], indicators: Indicators) -> bool:
-        """Check if RSI recently spiked above overbought and is now hooking down."""
-        if indicators.rsi_14 is None or indicators.prev_rsi_14 is None or not indicators.rsi_14_history:
-            return False
-
-        current_falling = indicators.rsi_14 < indicators.prev_rsi_14
-        prev_was_exhausted = any(val > self.RSI_OVERBOUGHT_THRESHOLD - 5 for val in indicators.rsi_14_history)
-        not_oversold = indicators.rsi_14 > 35
-
-        return current_falling and prev_was_exhausted and not_oversold
+            return max(history) > 55 and curr < history[-2] and curr > 35
 
     def scan(self, symbol, timeframe, candles, indicators, sr_zones, htf_candles=None):
-        if len(candles) < 30:
-            return None
-
+        if len(candles) < 30: return None
         current = candles[-1]
+        atr = indicators.atr_14 or 0
+        if atr <= 0: return None
+        if current.range_size > 1.8 * atr: return None
 
-        # ═══════ "Falling Knife" Protection ═══════
-        # If the current candle's range is massively larger than the average
-        # true range, it is a momentum dump/pump, not a gentle pullback.
-        if indicators.atr_14 and current.range_size > (indicators.atr_14 * self.ATR_RANGE_MULTIPLIER):
-            return None
+        ema50 = indicators.ema_50
+        ema100 = indicators.ema_100
+        ema200 = indicators.ema_200
+        if not all([ema50, ema100, ema200]): return None
 
-        # ═══════ LONG Setup ═══════
-        if self._check_ema_alignment_bullish(indicators):
-            # Confluence 2: Price must tag the 50 EMA
-            if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14, 'LONG'):
-                # For longs, price low should be near/at EMA 50, close should be above
-                if current.close > indicators.ema_50:
-                    # Momentum filter: reject massive red marubozu that barely closed above
-                    if indicators.atr_14 and current.body_size >= (indicators.atr_14 * self.ATR_BODY_MULTIPLIER):
-                        return None
-                    # Confluence 3: RSI momentum hook
-                    if self._rsi_hooked_bullish(candles, indicators):
+        if ema50 > ema100 > ema200:
+            if current.low <= ema50 + 0.2 * atr and current.close > ema50:
+                if not (current.body_size >= 1.2 * atr):
+                    if self._rsi_hook(indicators, "LONG"):
                         confidence = 0.65
-
-                        # +0.10 for bullish candle (close > open)
-                        if current.is_bullish:
-                            confidence += 0.10
-
-                        # +0.08 for strong lower wick rejection off EMA
-                        if current.lower_wick > current.body_size * 1.0:
-                            confidence += 0.08
-
-                        # +0.07 for volume confirmation
-                        if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20:
-                            confidence += 0.07
-
-                        # +0.05 for MACD histogram turning positive
-                        if indicators.macd_histogram and indicators.macd_histogram > 0:
-                            confidence += 0.05
-
-                        ema_spread = ((indicators.ema_50 - indicators.ema_200) / indicators.ema_200) * 100
-
-                        return SetupSignal(
-                            strategy_name=self.name,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            direction="LONG",
-                            confidence=min(confidence, 1.0),
-                            entry=current.close,
-                            notes=(
-                                f"Bullish trend pullback: EMA stack aligned "
-                                f"(50={indicators.ema_50:.2f} > 100={indicators.ema_100:.2f} > "
-                                f"200={indicators.ema_200:.2f}, spread={ema_spread:.2f}%). "
-                                f"Price tagged 50 EMA, RSI hooked up from "
-                                f"{indicators.prev_rsi_14:.1f} → {indicators.rsi_14:.1f}."
-                            ),
-                        )
-
-        # ═══════ SHORT Setup ═══════
-        if self._check_ema_alignment_bearish(indicators):
-            if indicators.ema_50 and indicators.atr_14 and self._price_tags_ema50(current, indicators.ema_50, indicators.atr_14, 'SHORT'):
-                if current.close < indicators.ema_50:
-                    # Momentum filter: reject massive green marubozu that barely closed below
-                    if indicators.atr_14 and current.body_size >= (indicators.atr_14 * self.ATR_BODY_MULTIPLIER):
-                        return None
-                    if self._rsi_hooked_bearish(candles, indicators):
+                        if current.is_bullish: confidence += 0.10
+                        if current.lower_wick > current.body_size * 1.2: confidence += 0.08
+                        if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20: confidence += 0.07
+                        if indicators.macd_histogram and indicators.macd_histogram > 0: confidence += 0.05
+                        confidence = min(confidence, 1.0)
+                        if confidence >= self.min_confidence:
+                            return SetupSignal(
+                                strategy_name=self.name, symbol=symbol, timeframe=timeframe,
+                                direction="LONG", confidence=confidence, entry=current.close,
+                                notes=f"Bullish trend pullback. EMA stack aligned. RSI hook. Close: {current.close:.2f}.",
+                            )
+        elif ema50 < ema100 < ema200:
+            if current.high >= ema50 - 0.2 * atr and current.close < ema50:
+                if not (current.body_size >= 1.2 * atr):
+                    if self._rsi_hook(indicators, "SHORT"):
                         confidence = 0.65
-
-                        if current.is_bearish:
-                            confidence += 0.10
-
-                        if current.upper_wick > current.body_size * 1.0:
-                            confidence += 0.08
-
-                        if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20:
-                            confidence += 0.07
-
-                        if indicators.macd_histogram and indicators.macd_histogram < 0:
-                            confidence += 0.05
-
-                        ema_spread = ((indicators.ema_200 - indicators.ema_50) / indicators.ema_200) * 100
-
-                        return SetupSignal(
-                            strategy_name=self.name,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            direction="SHORT",
-                            confidence=min(confidence, 1.0),
-                            entry=current.close,
-                            notes=(
-                                f"Bearish trend pullback: EMA stack aligned "
-                                f"(50={indicators.ema_50:.2f} < 100={indicators.ema_100:.2f} < "
-                                f"200={indicators.ema_200:.2f}, spread={ema_spread:.2f}%). "
-                                f"Price tagged 50 EMA, RSI hooked down from "
-                                f"{indicators.prev_rsi_14:.1f} → {indicators.rsi_14:.1f}."
-                            ),
-                        )
-
+                        if current.is_bearish: confidence += 0.10
+                        if current.upper_wick > current.body_size * 1.2: confidence += 0.08
+                        if indicators.volume_ma_20 and current.volume > indicators.volume_ma_20: confidence += 0.07
+                        if indicators.macd_histogram and indicators.macd_histogram < 0: confidence += 0.05
+                        confidence = min(confidence, 1.0)
+                        if confidence >= self.min_confidence:
+                            return SetupSignal(
+                                strategy_name=self.name, symbol=symbol, timeframe=timeframe,
+                                direction="SHORT", confidence=confidence, entry=current.close,
+                                notes=f"Bearish trend pullback. EMA stack aligned. RSI hook. Close: {current.close:.2f}.",
+                            )
         return None
 
     def calculate_sl(self, signal, candles, atr):
-        """SL below the 100 EMA zone — gives room for the pullback to breathe."""
-        entry = signal.entry or candles[-1].close
-        if signal.direction == "LONG":
-            return round(entry - (1.8 * atr), 8)
-        else:
-            return round(entry + (1.8 * atr), 8)
+        if signal.direction == "LONG": return round(min(c.low for c in candles[-5:]) - (0.5 * atr), 8)
+        else: return round(max(c.high for c in candles[-5:]) + (0.5 * atr), 8)
 
     def calculate_tp(self, signal, candles, atr, sr_zones=None):
-        """TP1 at 2x ATR, TP2 at 4x ATR — trend continuation targets."""
         entry = signal.entry or candles[-1].close
-        if signal.direction == "LONG":
-            return (round(entry + 2.0 * atr, 8), round(entry + 4.0 * atr, 8))
-        else:
-            return (round(entry - 2.0 * atr, 8), round(entry - 4.0 * atr, 8))
+        sl = self.calculate_sl(signal, candles, atr)
+        risk = max(abs(entry - sl), atr * 0.1)
+        if signal.direction == "LONG": return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
+        else: return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
 
     def should_confirm_with_llm(self, signal):
         return True

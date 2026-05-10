@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { fetchDatasets } from '../../api/client';
-import { ChevronDown, Layers, TrendingUp, BarChart3 } from 'lucide-react';
+import { ChevronDown, Layers, TrendingUp, BarChart3, Box } from 'lucide-react';
 
 interface Dataset {
   symbol: string;
@@ -18,6 +18,7 @@ interface ChartControlsProps {
   showSRZones: boolean;
   minStrength: number;
   showEMA: boolean;
+  showSMCZones: boolean;
   emaVisible: Record<string, boolean>;
   onSymbolChange: (s: string) => void;
   onTimeframeChange: (tf: string) => void;
@@ -25,6 +26,7 @@ interface ChartControlsProps {
   onToggleSRZones: () => void;
   onMinStrengthChange: (v: number) => void;
   onToggleEMA: () => void;
+  onToggleSMCZones: () => void;
   onToggleEMALine: (key: string) => void;
 }
 
@@ -35,6 +37,7 @@ export default function ChartControls({
   showSRZones,
   minStrength,
   showEMA,
+  showSMCZones,
   emaVisible,
   onSymbolChange,
   onTimeframeChange,
@@ -42,6 +45,7 @@ export default function ChartControls({
   onToggleSRZones,
   onMinStrengthChange,
   onToggleEMA,
+  onToggleSMCZones,
   onToggleEMALine,
 }: ChartControlsProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -171,6 +175,23 @@ export default function ChartControls({
           <span className="text-xs text-slate-400 font-mono w-7">{minStrength.toFixed(2)}</span>
         </div>
       )}
+
+      {/* Divider */}
+      <div className="w-px h-6 bg-slate-600/60 mx-1" />
+
+      {/* SMC Zone Toggle (FVG / OB) */}
+      <button
+        onClick={onToggleSMCZones}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+          showSMCZones
+            ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30 shadow-[0_0_12px_rgba(6,182,212,0.1)]'
+            : 'text-slate-400 border-slate-600/60 hover:text-white hover:bg-slate-700/60'
+        }`}
+        id="toggle-smc-zones"
+      >
+        <Box size={13} />
+        FVG / OB
+      </button>
 
       {/* Divider */}
       <div className="w-px h-6 bg-slate-600/60 mx-1" />

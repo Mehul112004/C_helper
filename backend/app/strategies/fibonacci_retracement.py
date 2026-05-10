@@ -33,8 +33,13 @@ Swing Detection:
   pivot bar count for confirmed swing highs/lows.
 """
 
+import numpy as np
+import pandas as pd
+from typing import Optional
+
 from app.core.fractals import build_swing_map
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
+from app.core.base_strategy import safe_lt, safe_gt, safe_between
 
 
 class FibonacciRetracementStrategy(BaseStrategy):
@@ -48,6 +53,15 @@ class FibonacciRetracementStrategy(BaseStrategy):
     timeframes = ["15m", "1h", "4h"]
     version = "2.0"
     min_confidence = 0.60
+
+    # ── Phase 2: Feature Declaration ──
+    required_features = ['ema', 'rsi', 'atr', 'volume_ma', 'sr', 'choch', 'bos']
+    feature_config = {
+        'ema_periods': [21, 50, 200],
+        'rsi_period': 14,
+        'atr_period': 14,
+        'volume_ma_period': 20,
+    }
 
     # --- Configuration ---
     SWING_LOOKBACK = 30        # Candles to search for the impulse swing
@@ -620,6 +634,140 @@ class FibonacciRetracementStrategy(BaseStrategy):
             return fib_382 - tolerance, fib_382 + tolerance
 
     # ── SL / TP (Fallbacks) ──────────────────────────────────────────────
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Phase 2: Confluence scoring for Fibonacci retracements.
+
+        Uses swing points from fractals.py extraction layer to compute
+        Fibonacci levels, then scores confluence at the current candle.
+        """
+        from app.core.fractals import detect_swing_points_df
+
+        df = detect_swing_points_df(df, pivot_n=self.PIVOT_BARS)
+        n = len(df)
+
+        df['signal'] = 0
+        df['confidence'] = 0.0
+        df['conf_base'] = 0.0
+        df['conf_sr'] = 0.0
+        df['conf_rsi'] = 0.0
+        df['conf_vol'] = 0.0
+        df['conf_candle'] = 0.0
+        df['conf_ema'] = 0.0
+        df['conf_event'] = 0.0
+        df['conf_zone'] = 0.0
+        df['direction'] = None
+
+        if n < self.SWING_LOOKBACK + self.PIVOT_BARS:
+            return df
+
+        lookback_start = max(0, n - self.SWING_LOOKBACK)
+        swing_high_vals = df.loc[lookback_start:n - 1, 'swing_high_price'].dropna()
+        swing_low_vals = df.loc[lookback_start:n - 1, 'swing_low_price'].dropna()
+
+        if swing_high_vals.empty or swing_low_vals.empty:
+            return df
+
+        last_swing_high = swing_high_vals.iloc[-1]
+        last_swing_low = swing_low_vals.iloc[-1]
+        impulse_range = abs(last_swing_high - last_swing_low)
+
+        atr_val = df['atr'].iloc[-1]
+        if pd.isna(atr_val) or atr_val <= 0:
+            return df
+
+        if impulse_range < self.MIN_IMPULSE_ATR * atr_val:
+            return df
+
+        swing_high_idx = swing_high_vals.index[-1]
+        swing_low_idx = swing_low_vals.index[-1]
+        bullish_setup = swing_low_idx < swing_high_idx
+        bearish_setup = swing_high_idx < swing_low_idx
+        if not (bullish_setup or bearish_setup):
+            return df
+
+        current_close = df['close'].iloc[-1]
+        fib_382 = last_swing_low + 0.382 * impulse_range if bullish_setup else last_swing_high - 0.382 * impulse_range
+        fib_50 = last_swing_low + 0.50 * impulse_range if bullish_setup else last_swing_high - 0.50 * impulse_range
+        fib_618 = last_swing_low + 0.618 * impulse_range if bullish_setup else last_swing_high - 0.618 * impulse_range
+        fib_786 = last_swing_low + 0.786 * impulse_range if bullish_setup else last_swing_high - 0.786 * impulse_range
+
+        tolerance = 0.3 * atr_val
+        in_golden = (current_close >= fib_50 - tolerance) and (current_close <= fib_618 + tolerance)
+        in_382 = abs(current_close - fib_382) <= tolerance
+        in_786 = abs(current_close - fib_786) <= tolerance
+        if not (in_golden or in_382 or in_786):
+            return df
+
+        zone_bonus = 0.05 if in_golden else (-0.05 if in_382 else 0.0)
+
+        # S/R overlap
+        sr_overlap = False
+        if df['sr_active'].iloc[-1]:
+            sr_support = df['sr_support_lower'].iloc[-1]
+            sr_resistance = df['sr_resistance_upper'].iloc[-1]
+            if bullish_setup and pd.notna(sr_support):
+                sr_overlap = abs(current_close - sr_support) <= atr_val * 0.5
+            elif bearish_setup and pd.notna(sr_resistance):
+                sr_overlap = abs(current_close - sr_resistance) <= atr_val * 0.5
+
+        # RSI
+        rsi_val = df['rsi'].iloc[-1]
+        rsi_ok = pd.notna(rsi_val) and (
+            (bullish_setup and 30 <= rsi_val <= 55) or
+            (bearish_setup and 45 <= rsi_val <= 70)
+        )
+
+        # Volume
+        vol_ma = df['volume_ma'].iloc[-1]
+        vol_ok = pd.notna(vol_ma) and df['volume'].iloc[-1] > vol_ma
+
+        # Directional candle
+        candle_ok = (bullish_setup and df['close'].iloc[-1] > df['open'].iloc[-1]) or \
+                    (bearish_setup and df['close'].iloc[-1] < df['open'].iloc[-1])
+
+        # EMA 200
+        ema200 = df['ema_200'].iloc[-1]
+        ema_ok = pd.notna(ema200) and (
+            (bullish_setup and current_close > ema200) or
+            (bearish_setup and current_close < ema200)
+        )
+
+        # ChoCh/BOS recent
+        choch_bull = df.get('event_choch_bullish_recent', pd.Series(False, index=df.index)).iloc[-1]
+        choch_bear = df.get('event_choch_bearish_recent', pd.Series(False, index=df.index)).iloc[-1]
+        bos_bull = df.get('event_bos_bullish_recent', pd.Series(False, index=df.index)).iloc[-1]
+        bos_bear = df.get('event_bos_bearish_recent', pd.Series(False, index=df.index)).iloc[-1]
+        event_ok = (bullish_setup and ((choch_bull == True) or (bos_bull == True))) or \
+                   (bearish_setup and ((choch_bear == True) or (bos_bear == True)))
+
+        confidence = 0.50 + zone_bonus
+        if sr_overlap: confidence += 0.15
+        if rsi_ok: confidence += 0.10
+        if vol_ok: confidence += 0.10
+        if candle_ok: confidence += 0.07
+        if ema_ok: confidence += 0.07
+        if event_ok: confidence += 0.05
+        confidence = max(0.0, min(1.0, confidence))
+
+        if confidence < self.min_confidence:
+            return df
+
+        last_idx = n - 1
+        df.loc[last_idx, 'signal'] = 1
+        df.loc[last_idx, 'confidence'] = confidence
+        df.loc[last_idx, 'conf_base'] = 0.50 + zone_bonus
+        df.loc[last_idx, 'conf_sr'] = 0.15 if sr_overlap else 0.0
+        df.loc[last_idx, 'conf_rsi'] = 0.10 if rsi_ok else 0.0
+        df.loc[last_idx, 'conf_vol'] = 0.10 if vol_ok else 0.0
+        df.loc[last_idx, 'conf_candle'] = 0.07 if candle_ok else 0.0
+        df.loc[last_idx, 'conf_ema'] = 0.07 if ema_ok else 0.0
+        df.loc[last_idx, 'conf_event'] = 0.05 if event_ok else 0.0
+        df.loc[last_idx, 'conf_zone'] = zone_bonus
+        df.loc[last_idx, 'direction'] = 'LONG' if bullish_setup else 'SHORT'
+
+        return df
 
     def calculate_sl(self, signal, candles, atr):
         """

@@ -142,6 +142,38 @@ export const refreshSRZones = async (
   return data;
 };
 
+// ---------- SMC Zones (FVG / OB / Events) ----------
+
+export interface SMCZone {
+  type: 'fvg' | 'ob' | 'event';
+  direction?: 'bullish' | 'bearish';
+  label?: string;
+  upper?: number;
+  lower?: number;
+  volume?: number;
+  created_at?: string;
+  active: boolean;
+}
+
+export interface SMCZonesResponse {
+  symbol: string;
+  timeframe: string;
+  zones: SMCZone[];
+  count: number;
+  candles_scanned: number;
+}
+
+export const fetchSMCZones = async (
+  symbol: string,
+  timeframe: string,
+  limit = 200
+): Promise<SMCZonesResponse> => {
+  const { data } = await apiClient.get('/sr-zones/smc-zones', {
+    params: { symbol, timeframe, limit },
+  });
+  return data;
+};
+
 // ---------- Phase 3: Strategies ----------
 
 export interface StrategyInfo {

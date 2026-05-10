@@ -15,6 +15,7 @@ export default function Charts() {
   const [limit, setLimit] = useState(500);
   const [showSRZones, setShowSRZones] = useState(true);
   const [minStrength, setMinStrength] = useState(0.2);
+  const [showSMCZones, setShowSMCZones] = useState(true);
   const [showEMA, setShowEMA] = useState(true);
   const [emaVisible, setEmaVisible] = useState<Record<string, boolean>>({
     ema_9: true,
@@ -27,6 +28,7 @@ export default function Charts() {
   const {
     candles,
     srZones,
+    smcZones,
     emaLines,
     loading,
     error,
@@ -34,7 +36,7 @@ export default function Charts() {
     updateLastCandle,
     liveTick,
     closeTime,
-  } = useChartData(symbol, timeframe, limit, showSRZones, minStrength, showEMA);
+  } = useChartData(symbol, timeframe, limit, showSRZones, minStrength, showEMA, showSMCZones);
 
   /* ─── SSE live candle + price updates ─── */
   const handleSSEEvent = useCallback(
@@ -119,6 +121,7 @@ export default function Charts() {
         showSRZones={showSRZones}
         minStrength={minStrength}
         showEMA={showEMA}
+        showSMCZones={showSMCZones}
         emaVisible={emaVisible}
         onSymbolChange={setSymbol}
         onTimeframeChange={setTimeframe}
@@ -126,6 +129,7 @@ export default function Charts() {
         onToggleSRZones={() => setShowSRZones(p => !p)}
         onMinStrengthChange={setMinStrength}
         onToggleEMA={() => setShowEMA(p => !p)}
+        onToggleSMCZones={() => setShowSMCZones(p => !p)}
         onToggleEMALine={toggleEMALine}
       />
 
@@ -135,6 +139,8 @@ export default function Charts() {
         candles={candles}
         srZones={srZones}
         showSRZones={showSRZones}
+        smcZones={smcZones}
+        showSMCZones={showSMCZones}
         emaLines={emaLines}
         showEMA={showEMA}
         emaVisible={emaVisible}

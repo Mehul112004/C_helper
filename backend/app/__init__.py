@@ -44,6 +44,18 @@ def create_app(test_config=None):
         except Exception:
             db.session.rollback()
 
+        # Phase 3: Confluence engine columns
+        for col_ddl in [
+            "ALTER TABLE candles ADD COLUMN is_closed BOOLEAN DEFAULT TRUE",
+            "ALTER TABLE watching_setups ADD COLUMN context_data JSONB",
+            "ALTER TABLE confirmed_signals ADD COLUMN context_data JSONB",
+        ]:
+            try:
+                db.session.execute(text(col_ddl))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
         # Create hypertable if it doesn't exist
         try:
             db.session.execute(text("SELECT create_hypertable('candles', 'open_time', if_not_exists => TRUE);"))

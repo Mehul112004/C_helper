@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { CandleData, SRZone, IndicatorSeriesPoint } from '../../api/client';
-import { fetchCandles, fetchSRZones, fetchIndicators } from '../../api/client';
+import type { CandleData, SRZone, SMCZone, IndicatorSeriesPoint } from '../../api/client';
+import { fetchCandles, fetchSRZones, fetchSMCZones, fetchIndicators } from '../../api/client';
 import type { LiveCandleEvent } from '../../types/signals';
 
 export interface ChartDataState {
   candles: CandleData[];
   srZones: SRZone[];
+  smcZones: SMCZone[];
   emaLines: {
     ema_9: IndicatorSeriesPoint[];
     ema_21: IndicatorSeriesPoint[];
@@ -54,10 +55,12 @@ export function useChartData(
   showSRZones: boolean,
   minStrength: number,
   showEMA: boolean,
+  showSMCZones: boolean,
 ) {
   const [state, setState] = useState<ChartDataState>({
     candles: [],
     srZones: [],
+    smcZones: [],
     emaLines: EMPTY_EMA,
     loading: false,
     error: null,
@@ -85,13 +88,15 @@ export function useChartData(
         ReturnType<typeof fetchCandles>,
         ReturnType<typeof fetchSRZones> | Promise<null>,
         ReturnType<typeof fetchIndicators> | Promise<null>,
+        ReturnType<typeof fetchSMCZones> | Promise<null>,
       ] = [
         fetchCandles(symbol, timeframe, limit),
         showSRZones ? fetchSRZones(symbol, timeframe, minStrength) : Promise.resolve(null),
         showEMA ? fetchIndicators(symbol, timeframe, true) : Promise.resolve(null),
+        showSMCZones ? fetchSMCZones(symbol, timeframe, Math.min(limit, 300)) : Promise.resolve(null),
       ];
 
-      const [candleResult, srResult, indicatorResult] = await Promise.all(promises);
+      const [candleResult, srResult, indicatorResult, smcResult] = await Promise.all(promises);
 
       if (controller.signal.aborted) return;
 
@@ -109,6 +114,7 @@ export function useChartData(
       setState({
         candles: candleResult.candles,
         srZones: srResult?.zones || [],
+        smcZones: smcResult?.zones || [],
         emaLines,
         loading: false,
         error: null,
@@ -125,7 +131,7 @@ export function useChartData(
         error: err instanceof Error ? err.message : 'Failed to load chart data',
       }));
     }
-  }, [symbol, timeframe, limit, showSRZones, minStrength, showEMA]);
+  }, [symbol, timeframe, limit, showSRZones, minStrength, showEMA, showSMCZones]);
 
   // Debounced refetch when inputs change
   useEffect(() => {
