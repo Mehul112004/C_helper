@@ -512,3 +512,25 @@ class BaseStrategy(ABC):
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         """Override to skip LLM confirmation for this strategy. Default: True."""
         return True
+
+
+# ── Phase 4: NaN Guard Utilities ──
+
+def safe_lt(series: pd.Series, threshold: float) -> pd.Series:
+    """Less-than comparison treating NaN as False (no silent signal weakening)."""
+    return series.notna() & (series < threshold)
+
+
+def safe_gt(series: pd.Series, threshold: float) -> pd.Series:
+    """Greater-than comparison treating NaN as False."""
+    return series.notna() & (series > threshold)
+
+
+def safe_between(series: pd.Series, lower: float, upper: float) -> pd.Series:
+    """Between check treating NaN as False."""
+    return series.notna() & (series >= lower) & (series <= upper)
+
+
+def safe_notna(series: pd.Series) -> pd.Series:
+    """Convenience: not-NaN check that returns a boolean Series."""
+    return series.notna()
