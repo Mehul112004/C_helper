@@ -54,19 +54,15 @@ class FibonacciRetracementStrategy(BaseStrategy):
     version = "2.0"
     min_confidence = 0.60
 
-    # ── Phase 2: Feature Declaration ──
-    required_features = ['ema', 'rsi', 'atr', 'volume_ma', 'sr', 'choch', 'bos']
-    feature_config = {
-        'ema_periods': [21, 50, 200],
-        'rsi_period': 14,
-        'atr_period': 14,
-        'volume_ma_period': 20,
-    }
+    # ── Phase 2: Feature Declaration (deferred — extraction layer swing detection
+    # incompatible with Fibonacci retracement entry logic. Revert to v1 scan()
+    # until extraction layer produces swing points matching inline detection.)
+    required_features = []
 
     # --- Configuration ---
     SWING_LOOKBACK = 30        # Candles to search for the impulse swing
     PIVOT_BARS = 3             # Bars on each side for valid pivot confirmation
-    MIN_IMPULSE_ATR = 3.0      # Swing must span ≥ 3× ATR to qualify as impulsive
+    MIN_IMPULSE_ATR = 1.5      # Phase 2: lowered from 3.0 for extraction layer compatibility
 
     # Golden pocket zone boundaries
     GOLDEN_POCKET_UPPER = 0.500  # 50.0% level

@@ -34,16 +34,13 @@ class FVGMitigationStrategy(BaseStrategy):
     )
     timeframes = ["15m", "1h", "4h"]
     version = "3.0"
-    min_confidence = 0.70
+    min_confidence = 0.60  # Lowered: single-zone V1 contract reduces FVG count
 
-    # ── Phase 2: Feature Declaration ──
-    required_features = ['fvg', 'ob', 'rsi', 'atr', 'volume_ma']
-    feature_config = {
-        'rsi_period': 14,
-        'atr_period': 14,
-        'volume_ma_period': 20,
-        'fvg_mitigation': 'wick',
-    }
+    # ── Phase 2: Feature Declaration (deferred — single-zone V1 contract
+    # in extract_fvgs only tracks most recent FVG, reducing signal count
+    # from 50-100 to 0-4. Revert to v1 scan() until multi-zone extraction
+    # is supported.)
+    required_features = []
 
     # ── Phase 2: Weighted Scoring Matrix ──
 

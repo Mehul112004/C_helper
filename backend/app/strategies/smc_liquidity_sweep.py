@@ -61,43 +61,50 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
           - FVG active nearby (+0.05)
           - EMA 50 trend alignment (+0.05)
         """
-        # ── Hard Gate: Sweep event ──
+        # ── Hard Gate 1: Sweep event ──
         sweep_bull = df.get('event_sweep_bullish', pd.Series(False, index=df.index))
         sweep_bear = df.get('event_sweep_bearish', pd.Series(False, index=df.index))
         sweep_fires = (sweep_bull == True) | (sweep_bear == True)
-        base_setup = sweep_fires
 
-        # ── Direction ──
+        # ── Hard Gate 2: Volume above 1.2x MA (sweep without volume is noise) ──
+        vol_hard_ok = df['volume_ma'].notna() & (df['volume'] > df['volume_ma'] * 1.2)
+
+        # ── Hard Gate 3: Close recovery (body must close on correct side of candle midpoint) ──
         is_bullish = sweep_bull == True
         is_bearish = sweep_bear == True
+        candle_range = df['high'] - df['low']
+        close_position = (df['close'] - df['low']) / candle_range.replace(0, np.nan)
+        close_ok = (
+            (candle_range > 0) & close_position.notna() &
+            ((is_bullish & (close_position > 0.55)) |
+             (is_bearish & (close_position < 0.45)))
+        )
+
+        base_setup = sweep_fires & vol_hard_ok & close_ok
 
         # ── Base confidence ──
         df['confidence'] = np.where(base_setup, 0.50, 0.0)
         df['conf_base'] = df['confidence'].copy()
-
-        # ── Modifier: Volume climax ──
-        vol_climax = df.get('event_volume_climax', pd.Series(False, index=df.index))
-        df['conf_vol'] = np.where(base_setup & (vol_climax == True), 0.15, 0.0)
-        df['confidence'] += df['conf_vol']
-
-        # ── Modifier: Strong close recovery ──
-        candle_range = df['high'] - df['low']
-        close_position = (df['close'] - df['low']) / candle_range.replace(0, np.nan)
-        strong_recovery = (
-            candle_range > 0 & close_position.notna() &
-            ((is_bullish & (close_position > 0.60)) |
-             (is_bearish & (close_position < 0.40)))
-        )
-        df['conf_close'] = np.where(base_setup & strong_recovery, 0.12, 0.0)
-        df['confidence'] += df['conf_close']
 
         # ── Modifier: RSI extreme alignment ──
         rsi_ok = df['rsi'].notna() & (
             (is_bullish & (df['rsi'] < 35)) |
             (is_bearish & (df['rsi'] > 65))
         )
-        df['conf_rsi'] = np.where(base_setup & rsi_ok, 0.10, 0.0)
+        df['conf_rsi'] = np.where(base_setup & rsi_ok, 0.12, 0.0)
         df['confidence'] += df['conf_rsi']
+
+        # ── Modifier: Wick quality (long lower wick for bull, long upper for bear) ──
+        body = (df['close'] - df['open']).abs()
+        lower_wick = np.minimum(df['open'], df['close']) - df['low']
+        upper_wick = df['high'] - np.maximum(df['open'], df['close'])
+        wick_ok = (
+            (body > 0) &
+            ((is_bullish & (lower_wick > body * 1.2)) |
+             (is_bearish & (upper_wick > body * 1.2)))
+        )
+        df['conf_wick'] = np.where(base_setup & wick_ok, 0.08, 0.0)
+        df['confidence'] += df['conf_wick']
 
         # ── Modifier: FVG active ──
         fvg_active = df['fvg_active'].notna() & (df['fvg_active'] == True)

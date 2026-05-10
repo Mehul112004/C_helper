@@ -70,25 +70,27 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
         # Bearish stack: 50 < 100 < 200
         bearish_stack = ema_ok & (df['ema_50'] < df['ema_100']) & (df['ema_100'] < df['ema_200'])
 
-        base_setup = bullish_stack | bearish_stack
-
-        # ── Base confidence ──
-        df['confidence'] = np.where(base_setup, 0.50, 0.0)
-        df['conf_base'] = df['confidence'].copy()
-
-        # ── Modifier: Price near EMA 50 ──
+        # ── Hard Gate 2: Price must be near EMA 50 (pullback to the moving average) ──
         atr_ok = df['atr'].notna() & (df['atr'] > 0)
-        near_ema50_tolerance = 0.3 * df['atr']
+        near_ema50_tolerance = 0.2 * df['atr']  # Tightened from 0.3: stricter pullback requirement
         near_ema50 = atr_ok & (
             (bullish_stack & (df['low'] <= df['ema_50'] + near_ema50_tolerance) &
              (df['close'] > df['ema_50'])) |
             (bearish_stack & (df['high'] >= df['ema_50'] - near_ema50_tolerance) &
              (df['close'] < df['ema_50']))
         )
-        df['conf_price'] = np.where(base_setup & near_ema50, 0.15, 0.0)
-        df['confidence'] += df['conf_price']
 
-        # ── Modifier: RSI momentum hook ──
+        # ── Hard Gate 3: Falling knife protection ──
+        candle_range = df['high'] - df['low']
+        not_falling_knife = atr_ok & (candle_range < 1.8 * df['atr'])
+
+        base_setup = (bullish_stack | bearish_stack) & near_ema50 & not_falling_knife
+
+        # ── Base confidence ──
+        df['confidence'] = np.where(base_setup, 0.50, 0.0)
+        df['conf_base'] = df['confidence'].copy()
+
+        # ── Modifier: RSI momentum hook (+0.15) ──
         rsi_ok = df['rsi'].notna()
         # Check if RSI was below 45 in last 5 bars and now rising
         rsi_hook_bull = pd.Series(False, index=df.index)
@@ -106,7 +108,7 @@ class TrendPullbackConfluenceStrategy(BaseStrategy):
                     (past_rsi.max() > 55) & (curr_rsi < past_rsi.iloc[-2]) & (curr_rsi > 35)
                 )
         rsi_hook = (bullish_stack & rsi_hook_bull) | (bearish_stack & rsi_hook_bear)
-        df['conf_rsi'] = np.where(base_setup & rsi_hook, 0.12, 0.0)
+        df['conf_rsi'] = np.where(base_setup & rsi_hook, 0.15, 0.0)
         df['confidence'] += df['conf_rsi']
 
         # ── Modifier: Directional candle ──

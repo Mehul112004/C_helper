@@ -270,6 +270,7 @@ class StrategyRunner:
         symbol: str,
         timeframe: str,
         candle_df: pd.DataFrame,
+        sr_zones: list[dict] = None,
         min_confidence_override: Optional[float] = None,
     ) -> list[SetupSignal]:
         """
@@ -278,6 +279,11 @@ class StrategyRunner:
         Pre-processes the full DataFrame once per strategy, generates signals
         across all rows, then extracts SetupSignal objects for every row
         where signal == 1.
+
+        sr_zones: pre-computed S/R zones from the backtester's detection
+                  pipeline. Injected as sr_* columns so strategies requesting
+                  the 'sr' feature use historically-accurate zones, not
+                  DB-dependent real-time ones.
         """
         signals = []
 
@@ -288,6 +294,12 @@ class StrategyRunner:
             try:
                 df = candle_df.copy()
                 df = strategy.pre_process(df, symbol=symbol, timeframe=timeframe)
+
+                # Inject backtest-computed SR zones after pre_process so
+                # historically-accurate zones override detect_zones_df output.
+                if sr_zones and 'sr' in strategy.required_features:
+                    _inject_sr_zones(df, sr_zones)
+
                 df = strategy.generate_signals(df)
 
                 # Extract signals from all rows
@@ -334,3 +346,34 @@ class StrategyRunner:
                 continue
 
         return signals
+
+    @staticmethod
+    def _inject_sr_zones(df: pd.DataFrame, sr_zones: list[dict]):
+        """
+        Inject pre-computed S/R zones as DataFrame columns.
+
+        Finds the strongest support and strongest resistance zone and sets
+        sr_active, sr_support_*, sr_resistance_* columns on all rows after
+        the first candle with valid data.
+        """
+        supports = [z for z in sr_zones if z.get('zone_type') in ('support', 'both')]
+        resistances = [z for z in sr_zones if z.get('zone_type') in ('resistance', 'both')]
+
+        best_support = max(supports, key=lambda z: z.get('strength_score', 0), default=None)
+        best_resistance = max(resistances, key=lambda z: z.get('strength_score', 0), default=None)
+
+        # Skip early rows (insufficient data for reliable zones)
+        skip_rows = min(20, len(df) // 4)
+
+        if best_support or best_resistance:
+            df.loc[df.index[skip_rows:], 'sr_active'] = True
+
+        if best_support:
+            df.loc[df.index[skip_rows:], 'sr_support_upper'] = best_support.get('zone_upper', 0)
+            df.loc[df.index[skip_rows:], 'sr_support_lower'] = best_support.get('zone_lower', 0)
+            df.loc[df.index[skip_rows:], 'sr_support_strength'] = best_support.get('strength_score', 0)
+
+        if best_resistance:
+            df.loc[df.index[skip_rows:], 'sr_resistance_upper'] = best_resistance.get('zone_upper', 0)
+            df.loc[df.index[skip_rows:], 'sr_resistance_lower'] = best_resistance.get('zone_lower', 0)
+            df.loc[df.index[skip_rows:], 'sr_resistance_strength'] = best_resistance.get('strength_score', 0)

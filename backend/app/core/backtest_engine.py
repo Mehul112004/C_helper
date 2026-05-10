@@ -526,15 +526,35 @@ class BacktestEngine:
 
             sr_zones = merged_zones
 
-            # 4. Run strategies bar-by-bar
-            signals = StrategyRunner.scan_historical(
-                strategies=strategies,
-                symbol=symbol,
-                timeframe=timeframe,
-                candle_df=candle_df,
-                indicator_series=indicator_series,
-                sr_zones=sr_zones,
-            )
+            # 4. Run strategies — split v1 (legacy scan) vs v2 (confluence generate_signals)
+            v1_strategies = [s for s in strategies if not s.required_features]
+            v2_strategies = [s for s in strategies if s.required_features]
+
+            signals = []
+
+            if v1_strategies:
+                v1_signals = StrategyRunner.scan_historical(
+                    strategies=v1_strategies,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    candle_df=candle_df,
+                    indicator_series=indicator_series,
+                    sr_zones=sr_zones,
+                )
+                signals.extend(v1_signals)
+
+            if v2_strategies:
+                v2_signals = StrategyRunner.scan_historical_v2(
+                    strategies=v2_strategies,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    candle_df=candle_df,
+                    sr_zones=sr_zones,
+                )
+                signals.extend(v2_signals)
+
+            # Sort signals chronologically for trade simulation
+            signals.sort(key=lambda s: s.timestamp if s.timestamp else datetime.min)
 
             # 5. Simulate trades
             trade_results = cls.simulate_trades(
