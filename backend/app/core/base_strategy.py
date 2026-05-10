@@ -7,7 +7,7 @@ Defines the universal data structures for the strategy engine:
 - BaseStrategy: Abstract base class all strategies must implement
 """
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -286,8 +286,11 @@ class BaseStrategy(ABC):
     """
     Abstract base class for all trading strategies.
 
-    All strategies must implement the scan() method.
-    Optional overrides: calculate_sl, calculate_tp, should_confirm_with_llm.
+    Phase 2: Feature-aware orchestrator with weighted scoring matrix.
+
+    Subclasses must implement:
+      - scan() (legacy, being phased out) OR
+      - generate_signals() (Phase 2, DataFrame-based scoring)
 
     Class attributes:
         name: Human-readable strategy name
@@ -295,6 +298,8 @@ class BaseStrategy(ABC):
         timeframes: List of timeframes this strategy operates on
         version: Strategy version string
         min_confidence: Minimum confidence threshold for signals (default 0.5)
+        required_features: List of feature names this strategy consumes
+        feature_config: Dict of feature-specific configuration
     """
 
     name: str = "Unnamed Strategy"
@@ -303,7 +308,160 @@ class BaseStrategy(ABC):
     version: str = "1.0"
     min_confidence: float = 0.5     # Configurable per strategy; session/runner can override
 
-    @abstractmethod
+    # ── Phase 2: Feature Declaration ──
+    required_features: list[str] = []
+    # Valid values: 'rsi', 'ema', 'macd', 'bb', 'bb_width_history', 'atr',
+    #               'volume_ma', 'fvg', 'ob', 'sr', 'choch', 'bos',
+    #               'volume_climax', 'liquidity_sweep'
+    feature_config: dict = {}
+    # e.g., {'rsi_period': 14, 'ema_periods': [9, 21, 50, 200], 'fvg_mitigation': 'wick'}
+
+    # ── Phase 2: Orchestration ──
+
+    @classmethod
+    def get_required_lookback(cls) -> int:
+        """Returns minimum candles needed based on declared features."""
+        if any(f in cls.required_features for f in ['ob', 'fvg', 'sr']):
+            return 1000
+        if 'ema' in cls.required_features:
+            periods = cls.feature_config.get('ema_periods', [])
+            if periods and max(periods) >= 200:
+                return 300
+        return 150
+
+    @classmethod
+    def get_min_candles(cls) -> int:
+        """Returns absolute minimum candles before any signal can fire."""
+        if any(f in cls.required_features for f in ['ob', 'fvg']):
+            return 50
+        if 'ema' in cls.required_features:
+            periods = cls.feature_config.get('ema_periods', [9])
+            return max(periods) + 20
+        return 30
+
+    @classmethod
+    def pre_process(cls, df: pd.DataFrame, symbol: str, timeframe: str) -> pd.DataFrame:
+        """
+        Dynamically loads only the features this specific strategy requires.
+
+        Called ONCE per strategy per candle close. The resulting DataFrame
+        is passed to generate_signals().
+        """
+        config = cls.feature_config
+
+        # ── Continuous State ──
+        if 'rsi' in cls.required_features:
+            from app.core.indicators import compute_rsi
+            df = df.copy() if 'rsi' not in df.columns else df
+            df['rsi'] = compute_rsi(df['close'], period=config.get('rsi_period', 14))
+
+        if 'ema' in cls.required_features:
+            from app.core.indicators import compute_ema
+            periods = config.get('ema_periods', [9, 21, 50, 200])
+            for p in periods:
+                col = f'ema_{p}'
+                if col not in df.columns:
+                    df = df.copy() if col not in df.columns else df
+                    df[col] = compute_ema(df['close'], period=p)
+
+        if 'macd' in cls.required_features:
+            from app.core.indicators import compute_macd
+            if 'macd_line' not in df.columns:
+                macd = compute_macd(df['close'])
+                df = df.copy()
+                df['macd_line'] = macd['macd_line']
+                df['macd_signal'] = macd['macd_signal']
+                df['macd_histogram'] = macd['macd_histogram']
+
+        if 'bb' in cls.required_features:
+            from app.core.indicators import compute_bollinger
+            if 'bb_upper' not in df.columns:
+                bb = compute_bollinger(df['close'])
+                df = df.copy()
+                df['bb_upper'] = bb['bb_upper']
+                df['bb_middle'] = bb['bb_middle']
+                df['bb_lower'] = bb['bb_lower']
+                df['bb_width'] = bb['bb_width']
+
+        if 'bb_width_history' in cls.required_features:
+            if 'bb_width' not in df.columns:
+                from app.core.indicators import compute_bollinger
+                bb = compute_bollinger(df['close'])
+                df = df.copy()
+                df['bb_width'] = bb['bb_width']
+            if 'bb_width_avg_20' not in df.columns:
+                df['bb_width_avg_20'] = df['bb_width'].rolling(20).mean()
+
+        if 'atr' in cls.required_features:
+            from app.core.indicators import compute_atr
+            if 'atr' not in df.columns:
+                df = df.copy()
+                df['atr'] = compute_atr(df['high'], df['low'], df['close'],
+                                         period=config.get('atr_period', 14))
+
+        if 'volume_ma' in cls.required_features:
+            from app.core.indicators import compute_volume_ma
+            if 'volume_ma' not in df.columns:
+                df = df.copy()
+                df['volume_ma'] = compute_volume_ma(df['volume'],
+                                                     period=config.get('volume_ma_period', 20))
+
+        # ── Spatial State (Zones) ──
+        if 'fvg' in cls.required_features:
+            from app.core.market_structure import extract_fvgs
+            df = extract_fvgs(df, mitigation_type=config.get('fvg_mitigation', 'wick'))
+
+        if 'ob' in cls.required_features:
+            from app.core.market_structure import extract_order_blocks
+            df = extract_order_blocks(df)
+
+        if 'sr' in cls.required_features:
+            from app.core.sr_engine import SREngine
+            df = SREngine.detect_zones_df(df, symbol=symbol, timeframe=timeframe)
+
+        # ── Temporal State (Events) ──
+        if 'choch' in cls.required_features or 'bos' in cls.required_features:
+            from app.core.events import detect_choch
+            events_df = detect_choch(df)
+            for col in events_df.columns:
+                if col not in df.columns:
+                    df[col] = events_df[col]
+
+        if 'volume_climax' in cls.required_features:
+            from app.core.events import detect_volume_climax
+            climax_df = detect_volume_climax(df)
+            for col in climax_df.columns:
+                if col not in df.columns:
+                    df[col] = climax_df[col]
+
+        if 'liquidity_sweep' in cls.required_features:
+            from app.core.events import detect_liquidity_sweep
+            sweep_df = detect_liquidity_sweep(df)
+            for col in sweep_df.columns:
+                if col not in df.columns:
+                    df[col] = sweep_df[col]
+
+        return df
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Phase 2: Pure logic. Receives a pre-processed DataFrame.
+
+        Override this to implement weighted scoring.
+        Must return DataFrame with at minimum:
+            df['signal']      — 1 or 0
+            df['direction']   — 'LONG', 'SHORT', or None
+            df['confidence']  — 0.0 to 1.0
+        Should also return confidence breakdown columns: df['conf_base'],
+        df['conf_fvg'], etc. for Phase 3 context_data serialization.
+        """
+        df['signal'] = 0
+        df['direction'] = None
+        df['confidence'] = 0.0
+        return df
+
+    # ── Legacy interface (existing strategies) ──
+
     def scan(
         self,
         symbol: str,
@@ -314,17 +472,14 @@ class BaseStrategy(ABC):
         htf_candles: list[Candle] = None,
     ) -> Optional[SetupSignal]:
         """
-        Called on every candle close for each active timeframe.
-        Return a SetupSignal if a setup is detected, or None.
-
-        Args:
-            symbol: Trading pair (e.g. "BTCUSDT")
-            timeframe: Current timeframe (e.g. "4h")
-            candles: Recent candle history (most recent last), at least 50 candles
-            indicators: Current indicator snapshot (includes prev-bar values)
-            sr_zones: S/R zones near current price from SREngine
+        Legacy entry point. Existing strategies override this directly.
+        Phase 2 strategies should override generate_signals() instead
+        and can leave this unimplemented.
         """
-        ...
+        raise NotImplementedError(
+            f"{self.name}: scan() not implemented. "
+            f"Either override scan() or implement generate_signals() for Phase 2."
+        )
 
     def calculate_sl(self, signal: SetupSignal, candles: list[Candle], atr: float) -> float:
         """

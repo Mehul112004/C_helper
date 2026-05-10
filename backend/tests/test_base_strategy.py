@@ -244,18 +244,27 @@ class TestSetupSignal:
 class TestBaseStrategy:
     """Tests for the BaseStrategy abstract class."""
 
-    def test_cannot_instantiate_directly(self):
-        """BaseStrategy cannot be instantiated directly (abstract)."""
-        with pytest.raises(TypeError):
-            BaseStrategy()
+    def test_can_instantiate_directly(self):
+        """Phase 2: BaseStrategy can be instantiated (has default implementations)."""
+        strategy = BaseStrategy()
+        assert strategy.name == "Unnamed Strategy"
 
-    def test_subclass_must_implement_scan(self):
-        """A subclass without scan() cannot be instantiated."""
-        class IncompleteStrategy(BaseStrategy):
-            name = "Incomplete"
+    def test_subclass_without_scan_raises_on_call(self):
+        """A subclass without scan() can be instantiated but raises NotImplementedError on scan()."""
+        class PartialStrategy(BaseStrategy):
+            name = "Partial"
+            def generate_signals(self, df):
+                df['signal'] = 1
+                df['direction'] = 'LONG'
+                df['confidence'] = 0.80
+                return df
 
-        with pytest.raises(TypeError):
-            IncompleteStrategy()
+        strategy = PartialStrategy()
+        # Instantiation succeeds (has generate_signals)
+        assert strategy.name == "Partial"
+        # But calling scan() raises NotImplementedError
+        with pytest.raises(NotImplementedError):
+            strategy.scan("BTCUSDT", "1h", [], None, [])
 
     def test_valid_subclass(self):
         """A properly implemented subclass can be instantiated."""

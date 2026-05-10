@@ -40,23 +40,38 @@ class BaseStrategy(ABC):
         """Returns minimum candles needed based on declared features."""
         if any(f in cls.required_features for f in ['ob', 'fvg', 'sr']):
             return 1000  # Spatial zones need deep history
-        if 'ema_200' in cls.required_features or any(
-            cls.feature_config.get('ema_periods', []) and 
-            max(cls.feature_config.get('ema_periods', [0])) >= 200
-        ):
-            return 300
+        if 'ema' in cls.required_features:
+            periods = cls.feature_config.get('ema_periods', [])
+            if periods and max(periods) >= 200:
+                return 300
         return 150  # Default safe buffer
-    
+
     @classmethod
-    def pre_process(cls, df: pd.DataFrame) -> pd.DataFrame:
+    def get_min_candles(cls) -> int:
+        """Returns absolute minimum candles before any signal can fire."""
+        # Spatial features need deep warmup; continuous states need less
+        if any(f in cls.required_features for f in ['ob', 'fvg']):
+            return 50
+        if 'ema' in cls.required_features:
+            periods = cls.feature_config.get('ema_periods', [9])
+            return max(periods) + 20
+        return 30
+
+    @classmethod
+    def pre_process(cls, df: pd.DataFrame, symbol: str, timeframe: str) -> pd.DataFrame:
         """
         Dynamically loads only the features this specific strategy requires.
-        
-        This is called ONCE per strategy per candle close, not once per signal scan.
-        The resulting DataFrame is passed to scan().
+
+        Called ONCE per strategy per candle close. The resulting DataFrame
+        is passed to generate_signals().
+
+        Args:
+            df: DataFrame with OHLCV columns from get_finalized_candles()
+            symbol: Trading pair (needed for SR zone detection context)
+            timeframe: Candle timeframe (needed for SR zone scoring)
         """
         config = cls.feature_config
-        
+
         # ── Continuous State ──
         if 'rsi' in cls.required_features:
             df['rsi'] = compute_rsi(df['close'], period=config.get('rsi_period', 14))
@@ -74,35 +89,47 @@ class BaseStrategy(ABC):
             df['bb_upper'] = bb['bb_upper']
             df['bb_middle'] = bb['bb_middle']
             df['bb_lower'] = bb['bb_lower']
+            # BB width history for squeeze detection
+            df['bb_width'] = bb['bb_width']
+            if 'bb_width_history' in cls.required_features:
+                df['bb_width_avg_20'] = bb['bb_width'].rolling(20).mean()
         if 'atr' in cls.required_features:
-            df['atr'] = compute_atr(df['high'], df['low'], df['close'], 
+            df['atr'] = compute_atr(df['high'], df['low'], df['close'],
                                      period=config.get('atr_period', 14))
         if 'volume_ma' in cls.required_features:
-            df['volume_ma'] = compute_volume_ma(df['volume'], 
+            df['volume_ma'] = compute_volume_ma(df['volume'],
                                                  period=config.get('volume_ma_period', 20))
-        
+
         # ── Spatial State (Zones) ──
         if 'fvg' in cls.required_features:
             df = extract_fvgs(df, mitigation_type=config.get('fvg_mitigation', 'wick'))
         if 'ob' in cls.required_features:
             df = extract_order_blocks(df)
         if 'sr' in cls.required_features:
-            df = detect_active_sr_zones(df)  # New function from refactored sr_engine
-        
+            # SREngine.detect_zones_df needs symbol & timeframe for scoring
+            from app.core.sr_engine import SREngine
+            df = SREngine.detect_zones_df(df, symbol=symbol, timeframe=timeframe)
+
         # ── Temporal State (Events) ──
         if 'choch' in cls.required_features or 'bos' in cls.required_features:
-            events = detect_choch(df)
-            for col in events.columns:
-                df[col] = events[col]
+            from app.core.events import detect_choch
+            events_df = detect_choch(df)
+            for col in events_df.columns:
+                if col not in df.columns:
+                    df[col] = events_df[col]
         if 'volume_climax' in cls.required_features:
-            climax = detect_volume_climax(df)
-            for col in climax.columns:
-                df[col] = climax[col]
+            from app.core.events import detect_volume_climax
+            climax_df = detect_volume_climax(df)
+            for col in climax_df.columns:
+                if col not in df.columns:
+                    df[col] = climax_df[col]
         if 'liquidity_sweep' in cls.required_features:
-            sweep = detect_liquidity_sweep(df)
-            for col in sweep.columns:
-                df[col] = sweep[col]
-        
+            from app.core.events import detect_liquidity_sweep
+            sweep_df = detect_liquidity_sweep(df)
+            for col in sweep_df.columns:
+                if col not in df.columns:
+                    df[col] = sweep_df[col]
+
         return df
     
     # ── Abstract: Subclass implements scoring logic, NOT extraction ──
@@ -111,9 +138,16 @@ class BaseStrategy(ABC):
         """
         Pure logic. Receives a pre-processed DataFrame with all requested features.
         Must return DataFrame with at minimum:
-            df['signal'] — 1 or 0
-            df['confidence'] — 0.0 to 1.0
-        May return additional columns for context (direction, notes, etc.).
+            df['signal']      — 1 or 0 (trigger flag)
+            df['direction']   — 'LONG', 'SHORT', or None (strategy must set this)
+            df['confidence']  — 0.0 to 1.0 (final composite score)
+
+        Must ALSO return confidence breakdown columns for Phase 3 context_data:
+            df['conf_base']   — float (base requirement met? 0.50 or 0.0)
+            df['conf_mod_N']  — float (each modifier's contribution, named by source)
+
+        The StrategyRunner uses the last row's values to build SetupSignal
+        and the breakdown columns to populate context_data.confidence_breakdown.
         """
         ...
     
@@ -129,38 +163,136 @@ class BaseStrategy(ABC):
 
 ### StrategyRunner Changes
 
-`StrategyRunner` (`app/core/strategy_runner.py`) must be updated to call the new pipeline:
+`StrategyRunner` (`app/core/strategy_runner.py`) needs a new v2 execution path and a backtester-compatible variant:
 
 ```python
 class StrategyRunner:
-    def run_single_scan(self, strategy, symbol, timeframe):
+    
+    @staticmethod
+    def _df_row_to_candles(df: pd.DataFrame, lookback: int = 50) -> list[Candle]:
+        """Convert the last N DataFrame rows to Candle objects for SL/TP calc."""
+        from app.core.base_strategy import Candle
+        window = df.iloc[-lookback:]
+        return [Candle.from_df_row(row) for _, row in window.iterrows()]
+    
+    @staticmethod
+    def run_single_scan_v2(strategy, symbol, timeframe,
+                            min_confidence_override=None) -> Optional[SetupSignal]:
         """
-        New flow:
-        1. Get required lookback from strategy
-        2. Fetch finalized candles from DB
-        3. Call strategy.pre_process(df) — adds all feature columns
-        4. Call strategy.generate_signals(df) — returns signal + confidence
-        5. Take the LAST row's signal/confidence
-        6. If signal == 1 and confidence >= min_confidence, build SetupSignal
+        Phase 2 execution path (live mode).
         """
+        # 1. Fetch data
         lookback = strategy.get_required_lookback()
         df = get_finalized_candles(symbol, timeframe, limit=lookback)
         
         if len(df) < strategy.get_min_candles():
-            return None  # Insufficient data
+            return None
         
-        df = strategy.pre_process(df)
+        # 2. Pre-process (add features — needs symbol/timeframe for SR zones)
+        df = strategy.pre_process(df, symbol=symbol, timeframe=timeframe)
+        
+        # 3. Generate signals
         df = strategy.generate_signals(df)
         
+        # 4. Extract last row
         last = df.iloc[-1]
         if last.get('signal', 0) != 1:
             return None
-        if last.get('confidence', 0) < strategy.min_confidence:
+        
+        confidence = last.get('confidence', 0)
+        threshold = min_confidence_override or strategy.min_confidence
+        if confidence < threshold:
             return None
         
-        # Build SetupSignal from the last row
-        ...
-```
+        # 5. Build SetupSignal
+        direction = last.get('direction', None)
+        if direction not in ('LONG', 'SHORT'):
+            return None
+        
+        entry = float(last['close'])
+        atr_val = float(last['atr']) if 'atr' in df.columns and pd.notna(last.get('atr')) else 0.0
+        
+        # Convert last N rows to Candle objects for SL/TP calculators
+        candles = StrategyRunner._df_row_to_candles(df, lookback=min(50, len(df)))
+        
+        signal = SetupSignal(
+            strategy_name=strategy.name,
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=direction,
+            confidence=round(float(confidence), 4),
+            entry=entry,
+        )
+        
+        # Calculate SL/TP using strategy's existing methods
+        if atr_val > 0:
+            signal.sl = strategy.calculate_sl(signal, candles, atr_val)
+            tp1, tp2 = strategy.calculate_tp(signal, candles, atr_val)
+            signal.tp1 = tp1
+            signal.tp2 = tp2
+        
+        return signal
+    
+    @classmethod
+    def scan_historical_v2(cls, strategies, symbol, timeframe, df,
+                            min_confidence_override=None) -> list[SetupSignal]:
+        """
+        Phase 2 backtester path.
+        
+        Pre-processes the full DataFrame once per strategy, generates signals
+        across all rows, then extracts SetupSignal objects for every row
+        where signal == 1.
+        """
+        signals = []
+        
+        for strategy in strategies:
+            if timeframe not in strategy.timeframes:
+                continue
+            
+            df_copy = df.copy()
+            df_copy = strategy.pre_process(df_copy, symbol=symbol, timeframe=timeframe)
+            df_copy = strategy.generate_signals(df_copy)
+            
+            # Extract signals from all rows
+            signal_rows = df_copy[df_copy['signal'] == 1]
+            
+            for idx, row in signal_rows.iterrows():
+                confidence = row.get('confidence', 0)
+                threshold = min_confidence_override or strategy.min_confidence
+                if confidence < threshold:
+                    continue
+                
+                direction = row.get('direction', None)
+                if direction not in ('LONG', 'SHORT'):
+                    continue
+                
+                entry = float(row['close'])
+                atr_val = float(row['atr']) if 'atr' in df_copy.columns and pd.notna(row.get('atr')) else 0.0
+                
+                # Build candle window up to this row for SL/TP
+                window_start = max(0, idx - 49)
+                candle_rows = df_copy.iloc[window_start: idx + 1]
+                candles = [Candle.from_df_row(r) for _, r in candle_rows.iterrows()]
+                
+                signal = SetupSignal(
+                    strategy_name=strategy.name,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    direction=direction,
+                    confidence=round(float(confidence), 4),
+                    entry=entry,
+                    timestamp=candle_rows.iloc[-1]['open_time'],
+                )
+                
+                if atr_val > 0:
+                    signal.sl = strategy.calculate_sl(signal, candles, atr_val)
+                    tp1, tp2 = strategy.calculate_tp(signal, candles, atr_val)
+                    signal.tp1 = tp1
+                    signal.tp2 = tp2
+                
+                signals.append(signal)
+        
+        return signals
 
 ---
 
@@ -179,6 +311,8 @@ If each condition has a 40% chance of being true independently, the AND of 5 con
 
 ### The Solution: Base Requirements + Additive Modifiers
 
+**Important: Strategies must handle both directions.** The confidence matrix must generate separate bullish and bearish scores, and the strategy itself sets the `direction` column.
+
 ```python
 def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -188,6 +322,8 @@ def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
     Step 2: Start confidence at base level (e.g., 0.50)
     Step 3: Add modifiers for each confluence factor
     Step 4: Trigger signal when confidence crosses threshold
+    Step 5: Set direction explicitly (strategy decides LONG/SHORT)
+    Step 6: Output confidence breakdown columns for context_data
     """
     # ── Step 1: Base Requirement (Hard Gate) ──
     # Only 1-2 absolute requirements. Everything else is additive.
@@ -195,26 +331,36 @@ def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
     
     # ── Step 2: Base Confidence ──
     df['confidence'] = np.where(base_setup, 0.50, 0.0)
+    df['conf_base'] = df['confidence'].copy()  # Breakdown: base
     
     # ── Step 3: Additive Confluence (Soft Gates) ──
-    # Each modifier adds to confidence ONLY if base_setup is true
     
     # FVG overlap with OB zone
-    fvg_overlap = df['fvg_active'] & (df['fvg_lower'] <= df['ob_upper'])
-    df['confidence'] += np.where(base_setup & fvg_overlap, 0.20, 0.0)
+    fvg_overlap = df['fvg_active'].notna() & (df['fvg_active']) & \
+                  df['fvg_lower'].notna() & (df['fvg_lower'] <= df['ob_upper'])
+    df['conf_fvg'] = np.where(base_setup & fvg_overlap, 0.20, 0.0)
+    df['confidence'] += df['conf_fvg']
     
-    # RSI in oversold territory
-    df['confidence'] += np.where(base_setup & (df['rsi'] < 30), 0.15, 0.0)
+    # RSI in oversold territory (with NaN guard)
+    rsi_oversold = df['rsi'].notna() & (df['rsi'] < 30)
+    df['conf_rsi'] = np.where(base_setup & rsi_oversold, 0.15, 0.0)
+    df['confidence'] += df['conf_rsi']
     
     # Recent bullish ChoCh
-    df['confidence'] += np.where(base_setup & (df['event_choch_bullish_recent'] == 1), 0.10, 0.0)
+    choch_recent = df.get('event_choch_bullish_recent', pd.Series(False, index=df.index))
+    df['conf_choch'] = np.where(base_setup & (choch_recent == True), 0.10, 0.0)
+    df['confidence'] += df['conf_choch']
     
     # Volume confirmation
-    df['confidence'] += np.where(base_setup & (df['volume'] > df['volume_ma']), 0.05, 0.0)
+    vol_ok = df['volume_ma'].notna() & (df['volume'] > df['volume_ma'])
+    df['conf_vol'] = np.where(base_setup & vol_ok, 0.05, 0.0)
+    df['confidence'] += df['conf_vol']
     
     # ── Step 4: Signal Trigger ──
-    # Confidence threshold is configurable per strategy
-    df['signal'] = np.where(df['confidence'] >= self.threshold, 1, 0)
+    threshold = self.min_confidence
+    df['signal'] = np.where(df['confidence'] >= threshold, 1, 0)
+    
+    # ── Step 5: Direction (strategy decides — this one is LONG-only) ──
     df['direction'] = np.where(df['signal'] == 1, 'LONG', None)
     
     return df
@@ -294,19 +440,29 @@ class {StrategyName}(BaseStrategy):
         ema_cross_up = (df['ema_9'] > df['ema_21']) & (df['ema_9'].shift(1) <= df['ema_21'].shift(1))
         base_setup = ema_cross_up
         
-        # Step 2: Base confidence
+        # Step 2: Base confidence + breakdown
         df['confidence'] = np.where(base_setup, 0.50, 0.0)
+        df['conf_base'] = df['confidence'].copy()
         
-        # Step 3: Additive modifiers
-        df['confidence'] += np.where(base_setup & (df['close'] > df['ema_50']), 0.20, 0.0)
-        df['confidence'] += np.where(base_setup & (df['close'] > df['ema_200']), 0.10, 0.0)
-        df['confidence'] += np.where(base_setup & (df['volume'] > df['volume_ma']), 0.10, 0.0)
+        # Step 3: Additive modifiers (each tracked for Phase 3 context_data)
+        df['conf_ema50'] = np.where(base_setup & (df['close'] > df['ema_50']), 0.20, 0.0)
+        df['confidence'] += df['conf_ema50']
         
-        rsi_ok = df['rsi'].between(40, 60)
-        df['confidence'] += np.where(base_setup & rsi_ok, 0.05, 0.0)
+        df['conf_ema200'] = np.where(base_setup & (df['close'] > df['ema_200']), 0.10, 0.0)
+        df['confidence'] += df['conf_ema200']
+        
+        vol_ok = df['volume_ma'].notna() & (df['volume'] > df['volume_ma'])
+        df['conf_vol'] = np.where(base_setup & vol_ok, 0.10, 0.0)
+        df['confidence'] += df['conf_vol']
+        
+        rsi_ok = df['rsi'].notna() & df['rsi'].between(40, 60)
+        df['conf_rsi'] = np.where(base_setup & rsi_ok, 0.05, 0.0)
+        df['confidence'] += df['conf_rsi']
         
         # Step 4: Trigger
         df['signal'] = np.where(df['confidence'] >= self.min_confidence, 1, 0)
+        
+        # Step 5: Direction (strategy decides — LONG for EMA cross up)
         df['direction'] = np.where(df['signal'] == 1, 'LONG', None)
         
         return df
@@ -431,10 +587,12 @@ def test_lookback_for_spatial_strategies():
 ## Implementation Sequence
 
 ### Week 1: Base Infrastructure
-1. Refactor `BaseStrategy` class — add `required_features`, `feature_config`, `pre_process()`, `get_required_lookback()`, `generate_signals()`
-2. Create `app/core/data_utils.py` with `get_finalized_candles()`
-3. Write `StrategyRunner.run_single_scan_v2()`
-4. Keep `run_single_scan()` as legacy path until all strategies are migrated
+1. Refactor `BaseStrategy` class — add `required_features`, `feature_config`, `pre_process(df, symbol, timeframe)`, `get_required_lookback()`, `get_min_candles()`, `generate_signals()`
+2. Add `_df_row_to_candles()` helper and `run_single_scan_v2()` to StrategyRunner
+3. Add `scan_historical_v2()` to StrategyRunner (backtester integration)
+4. Keep `run_single_scan()` and `scan_historical()` as legacy paths
+5. Update `LiveScanner._on_candle_close()` to use v2 pipeline
+6. Update `BacktestEngine.run()` to use `scan_historical_v2()`
 
 ### Week 2: Strategy Rewrites (Batch 1 — Simple)
 1. EMA Crossover (simplest, good test case)
