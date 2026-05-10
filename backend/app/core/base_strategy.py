@@ -258,6 +258,7 @@ class SetupSignal:
     tp2: Optional[float] = None         # take-profit 2
     notes: str = ""                     # context for LLM
     timestamp: datetime = field(default_factory=datetime.utcnow)
+    context_data: Optional[dict] = None  # Phase 3: serialized snapshot of zones/indicators/events
 
     def __post_init__(self):
         if self.direction not in ("LONG", "SHORT"):

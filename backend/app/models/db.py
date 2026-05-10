@@ -17,6 +17,7 @@ class Candle(db.Model):
     low = db.Column(db.Float, nullable=False)
     close = db.Column(db.Float, nullable=False)
     volume = db.Column(db.Float, nullable=False)
+    is_closed = db.Column(db.Boolean, default=True)  # Phase 3: Trap 1 defense
 
     def to_dict(self):
         return {
@@ -27,7 +28,8 @@ class Candle(db.Model):
             'high': self.high,
             'low': self.low,
             'close': self.close,
-            'volume': self.volume
+            'volume': self.volume,
+            'is_closed': self.is_closed,
         }
 
 
@@ -129,6 +131,7 @@ class WatchingSetup(db.Model):
     zone_description = db.Column(db.Text, default='')                    # e.g. "Resistance at $3,420"
     condition_description = db.Column(db.Text, default='')               # e.g. "Bearish engulfing on 1h close"
     telegram_message_id = db.Column(db.String(50), nullable=True)        # Used to reply with verdicts
+    context_data = db.Column(db.JSON, nullable=True)                     # Phase 3: snapshot of zones/indicators/events
 
     def to_dict(self):
         return {
@@ -151,6 +154,7 @@ class WatchingSetup(db.Model):
             'expired_at': self.expired_at.isoformat() if self.expired_at else None,
             'zone_description': self.zone_description,
             'condition_description': self.condition_description,
+            'context_data': self.context_data,
         }
 
 
@@ -214,6 +218,7 @@ class ConfirmedSignal(db.Model):
     
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
     outcome_updated_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    context_data = db.Column(db.JSON, nullable=True)                     # Phase 3: snapshot of zones/indicators/events
 
     def to_dict(self):
         return {

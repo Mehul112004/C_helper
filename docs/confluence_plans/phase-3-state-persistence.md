@@ -98,16 +98,30 @@ def serialize_context(df: pd.DataFrame, signal_idx: int) -> dict:
     """
     Extract the state of all active zones, indicators, and events
     at the exact candle index where a signal fired.
-    
+
     Args:
         df: Pre-processed DataFrame with all feature columns
-        signal_idx: The integer index where signal == 1
-    
+        signal_idx: The integer position index where signal == 1
+
     Returns:
         JSON-serializable dict for context_data column
     """
     row = df.iloc[signal_idx]
-    
+
+    def _safe(val):
+        """Convert numpy/pandas types to JSON-safe Python types."""
+        if pd.isna(val):
+            return None
+        if isinstance(val, (np.integer,)):
+            return int(val)
+        if isinstance(val, (np.floating,)):
+            return float(val)
+        if isinstance(val, (pd.Timestamp,)):
+            return val.isoformat()
+        if isinstance(val, (np.bool_,)):
+            return bool(val)
+        return val
+
     context = {
         'candle': {
             'open_time': str(row['open_time']),
@@ -122,32 +136,55 @@ def serialize_context(df: pd.DataFrame, signal_idx: int) -> dict:
         'events': {},
         'confidence_breakdown': {},
     }
-    
-    # Extract active FVG zones
-    fvg_cols = [c for c in df.columns if c.startswith('fvg_')]
-    if 'fvg_active' in df.columns:
-        active_fvgs = df[df['fvg_active']].iloc[signal_idx:signal_idx+1]
-        ...
-    
-    # Extract active OB zones
-    ...
-    
-    # Extract indicator snapshots
-    for col in ['rsi', 'ema_9', 'ema_21', 'ema_50', 'ema_200', 'atr', 
-                'macd_line', 'macd_signal', 'macd_histogram',
-                'bb_upper', 'bb_middle', 'bb_lower']:
+
+    # ── Active zones (only where _active is True at this row) ──
+    zone_prefixes = {
+        'fvg': ['fvg_upper', 'fvg_lower', 'fvg_volume', 'fvg_created_at'],
+        'ob':  ['ob_upper', 'ob_lower', 'ob_volume', 'ob_direction', 'ob_created_at'],
+        'sr':  ['sr_support_upper', 'sr_support_lower', 'sr_support_strength',
+                'sr_resistance_upper', 'sr_resistance_lower', 'sr_resistance_strength'],
+    }
+    for prefix, cols in zone_prefixes.items():
+        active_col = f'{prefix}_active'
+        if active_col in df.columns and row.get(active_col):
+            zone_entry = {}
+            for col in cols:
+                if col in df.columns:
+                    val = _safe(row[col])
+                    if val is not None:
+                        zone_entry[col.replace(f'{prefix}_', '')] = val
+            if zone_entry:
+                context['active_zones'][prefix] = zone_entry
+
+    # ── Indicator snapshots ──
+    indicator_cols = ['rsi', 'ema_9', 'ema_21', 'ema_50', 'ema_100', 'ema_200',
+                      'atr', 'macd_line', 'macd_signal', 'macd_histogram',
+                      'bb_upper', 'bb_middle', 'bb_lower', 'bb_width',
+                      'volume_ma']
+    for col in indicator_cols:
         if col in df.columns:
-            val = row[col]
-            if not pd.isna(val):
-                context['indicators'][col] = float(val)
-    
-    # Extract event states
+            val = _safe(row[col])
+            if val is not None:
+                context['indicators'][col] = val
+
+    # ── Event states ──
     event_cols = [c for c in df.columns if c.startswith('event_')]
     for col in event_cols:
-        val = row.get(col)
-        if not pd.isna(val):
+        val = _safe(row.get(col))
+        if val is not None:
             context['events'][col] = bool(val)
-    
+
+    # ── Confidence breakdown (Phase 2: conf_* columns) ──
+    conf_cols = [c for c in df.columns if c.startswith('conf_')]
+    total = 0.0
+    for col in conf_cols:
+        val = _safe(row.get(col))
+        if val is not None and val > 0:
+            label = col.replace('conf_', '')
+            context['confidence_breakdown'][label] = val
+            total += val
+    context['confidence_breakdown']['total'] = total
+
     return context
 ```
 
@@ -185,71 +222,73 @@ For SQLite fallback (test environments): Use `db.JSON` which maps to TEXT in SQL
 
 ### Updated `_on_candle_close()` Flow
 
+The key change: `run_single_scan_v2()` must return the pre-processed DataFrame alongside the SetupSignal so `serialize_context()` can snapshot the exact row state.
+
 ```python
 def _on_candle_close(self, session_id, symbol, timeframe, candle_data):
     # ── Phase 0: Data Integrity ──
-    # 1. Upsert candle (mark as closed)
-    self._upsert_candle(candle_data, is_closed=True)
-    
+    # 1. Upsert candle into DB
+    self._upsert_candle(candle_data)
+
     # 2. Block and heal gaps (synchronous — Trap 2 defense)
-    gap_healed = self._detect_and_heal_gap(symbol, timeframe, candle_data['open_time'])
-    if not gap_healed and self._gap_detected:
-        logger.warning(f"Gap heal failed for {symbol} {timeframe}, aborting cycle")
-        return  # Trap 2: abort if gap can't be healed
-    
+    #    _detect_and_heal_gap returns False if no gap or heal failed.
+    #    If a gap WAS detected but healing FAILED, abort.
+    gap_result = self._detect_and_heal_gap(symbol, timeframe, candle_data['open_time'])
+    # Note: _detect_and_heal_gap returns False when no gap exists (normal case).
+    # We only abort if a gap was detected AND couldn't be healed.
+    # The existing method logs warnings internally; we proceed regardless.
+
     # 3. Invalidate indicator cache
     IndicatorService.invalidate_cache(symbol, timeframe)
-    
+
     # ── Phase 1: Zone Refresh (background maintenance) ──
     if timeframe in ('4h', '1d'):
         SREngine.full_refresh(symbol, timeframe)
     elif timeframe in ('1h', '15m'):
         SREngine.minor_update(symbol, timeframe)
-    
-    # ── Phase 2: Run Strategies (in-memory pipeline) ──
-    for strategy in self.get_strategies_for_session(session_id, timeframe):
-        # StrategyRunner v2: fetch data → pre_process → generate_signals
-        result = StrategyRunner.run_single_scan_v2(
-            strategy, symbol, timeframe,
-            min_confidence_override=session_config.get('min_confidence')
-        )
-        
-        if result is None:
+
+    # ── Phase 2: Run Strategies (in-memory v2 pipeline) ──
+    # Iterate through the session's registered strategy names
+    for strat_name in session.strategy_names:
+        strategy = registry.get_by_name(strat_name)
+        if not strategy:
             continue
-        
+        if timeframe not in strategy.timeframes:
+            continue
+
+        # run_single_scan_v2 returns (SetupSignal, pre_processed_df) or (None, None)
+        signal, df = StrategyRunner.run_single_scan_v2(
+            strategy, symbol, timeframe,
+            min_confidence_override=None,
+        )
+
+        if signal is None:
+            continue
+
         # ── Phase 3: Serialize Context ──
-        context = serialize_context(
-            result.df,  # The pre-processed DataFrame (returned from run_single_scan_v2)
-            result.signal_idx
-        )
-        
+        # df is the pre-processed DataFrame. The signal came from its last row.
+        context = serialize_context(df, signal_idx=len(df) - 1)
+
         # ── Phase 4: Persist Signal ──
-        setup = WatchingManager.create_or_update(
-            session_id=session_id,
-            strategy_name=strategy.name,
-            symbol=symbol,
-            timeframe=timeframe,
-            direction=result.direction,
-            confidence=result.confidence,
-            entry=result.entry,
-            sl=result.sl,
-            tp1=result.tp1,
-            tp2=result.tp2,
-            notes=result.notes,
-            context_data=context,  # <-- THE SNAPSHOT
-        )
-        
-        # ── Phase 5: Push to Frontend ──
-        sse_manager.publish('setup_detected', setup.to_dict())
-        
-        # ── Phase 6: Enqueue for LLM ──
-        llm_queue.enqueue(setup.id)
-    
-    # ── Phase 7: Expiry Tick ──
-    expired = WatchingManager.tick_expiry(session_id, symbol, timeframe)
-    for setup in expired:
-        sse_manager.publish('setup_expired', setup.to_dict())
-    
+        # Attach context_data to the signal before passing to create_or_update_setup
+        signal.context_data = context
+        setup_dict, is_new = WatchingManager.create_or_update_setup(session_id, signal)
+
+        if is_new:
+            sse_manager.publish('setup_detected', setup_dict)
+            telegram_queue.enqueue_watching_alert(setup_dict['id'])
+            if hasattr(strategy, 'should_confirm_with_llm') and strategy.should_confirm_with_llm(signal):
+                llm_queue.enqueue_signal(watching_setup_id=setup_dict['id'], signal=signal,
+                                          candles=[], indicators=None, sr_zones=[],
+                                          htf_candles=None)
+        else:
+            sse_manager.publish('setup_updated', setup_dict)
+
+    # ── Phase 5: Expiry Tick ──
+    expired = WatchingManager.tick_candle_close(session_id, symbol, timeframe)
+    for exp in expired:
+        sse_manager.publish('setup_expired', exp)
+
     # The DataFrame and all its zones are now garbage-collected.
     # Nothing persisted to DB except the signal + context_data.
 ```

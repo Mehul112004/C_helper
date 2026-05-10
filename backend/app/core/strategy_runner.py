@@ -9,6 +9,7 @@ from typing import Optional
 
 from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 from app.core.data_utils import get_finalized_candles
+from app.core.context_serializer import serialize_context
 
 
 class StrategyRunner:
@@ -195,10 +196,15 @@ class StrategyRunner:
         symbol: str,
         timeframe: str,
         min_confidence_override: Optional[float] = None,
-    ) -> Optional[SetupSignal]:
+    ):
         """
         Phase 2 execution path (live mode).
         Uses DataFrame-based pipeline with feature extraction.
+
+        Returns:
+            Tuple of (SetupSignal, pre_processed_df) or (None, None).
+            The DataFrame is returned so the caller can serialize context_data
+            from the exact row where the signal fired.
         """
         from app.core.base_strategy import SetupSignal
 
@@ -208,7 +214,7 @@ class StrategyRunner:
             df = get_finalized_candles(symbol, timeframe, limit=lookback)
 
             if len(df) < strategy.get_min_candles():
-                return None
+                return None, None
 
             # 2. Pre-process (adds feature columns)
             df = strategy.pre_process(df, symbol=symbol, timeframe=timeframe)
@@ -219,16 +225,16 @@ class StrategyRunner:
             # 4. Extract last row
             last = df.iloc[-1]
             if last.get('signal', 0) != 1:
-                return None
+                return None, None
 
             confidence = last.get('confidence', 0)
             threshold = min_confidence_override or strategy.min_confidence
             if confidence < threshold:
-                return None
+                return None, None
 
             direction = last.get('direction', None)
             if direction not in ('LONG', 'SHORT'):
-                return None
+                return None, None
 
             entry = float(last['close'])
             atr_val = float(last['atr']) if 'atr' in df.columns and pd.notna(last.get('atr')) else 0.0
@@ -251,11 +257,11 @@ class StrategyRunner:
                 signal.tp1 = tp1
                 signal.tp2 = tp2
 
-            return signal
+            return signal, df
 
         except Exception as e:
             print(f"[StrategyRunner v2] Error in {strategy.name}: {e}")
-            return None
+            return None, None
 
     @classmethod
     def scan_historical_v2(
