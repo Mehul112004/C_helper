@@ -442,6 +442,12 @@ def test_on_crash_data():
 
 ## 5E: Integration Test — Extractors → Strategies → Signals
 
+**NOTE**: This test requires strategies to have `generate_signals()` implemented.
+The 13 existing strategies still use the legacy `scan()` interface. This test
+becomes active AFTER Phase 2 strategy rewrites are complete, not before.
+
+For now, use the standalone extractor tests (5B) to validate extractors in isolation.
+
 Once extractors are validated in isolation, test the full pipeline:
 
 ```python
@@ -550,12 +556,15 @@ jobs:
 
 ---
 
-## Phase 5 Validation Gates (Must Pass Before Phase 2 Strategy Rewrites Begin)
+## Phase 5 Validation Gates
 
-1. **Extractor Isolation Gate**: All extractor unit tests pass with > 90% code coverage
-2. **TradingView Parity Gate**: Manual verification of 5+ FVGs, 3+ OBs, 3+ ChoCh events against TradingView
-3. **Discrepancy Resolution Gate**: All TradingView discrepancies documented, root cause identified, and fix applied
-4. **Invalidation Gate**: All adversarial scenarios pass (spectacular failures, crashes, flat markets)
+Extractor validation gates (apply NOW, before strategy rewrites):
+1. **Extractor Isolation Gate**: All extractor unit tests pass
+2. **Invalidation Gate**: All adversarial scenarios pass
+3. **Performance Gate**: 100k-row extraction completes in < 2 seconds
+4. **Contract Compliance Gate**: Every zone has the Universal Zone Contract columns
+
+Integration gates (apply AFTER Phase 2 strategy rewrites):
 5. **Smoke Test Gate**: Full pipeline (extractors → strategy → signal) produces valid output on real Binance data
-6. **Performance Gate**: 100k-row extraction completes in < 2 seconds
+6. **TradingView Parity Gate**: Manual verification of 5+ FVGs, 3+ OBs, 3+ ChoCh events against TradingView
 7. **CI Gate**: All validation tests run in CI pipeline on push to extraction layer files

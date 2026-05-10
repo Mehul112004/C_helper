@@ -104,7 +104,7 @@ def extract_fvgs(
             if not already_mitigated:
                 # Set zone at this candle, apply masked ffill + mitigation
                 _apply_fvg_zone(df, i, fvg_upper_val, fvg_lower_val, fvg_volume_val, fvg_time_val,
-                                mitigation_type)
+                                mitigation_type, 'bullish')
 
         # ── Bearish FVG ──
         if c3['high'] < c1['low']:
@@ -126,7 +126,7 @@ def extract_fvgs(
 
             if not already_mitigated:
                 _apply_fvg_zone(df, i, fvg_upper_val, fvg_lower_val, fvg_volume_val, fvg_time_val,
-                                mitigation_type)
+                                mitigation_type, 'bearish')
 
     return df
 
@@ -139,6 +139,7 @@ def _apply_fvg_zone(
     volume_val: float,
     time_val,
     mitigation_type: str,
+    direction: str = 'bullish',
 ):
     """
     Apply a single FVG zone using masked forward-filling.
@@ -184,25 +185,22 @@ def _apply_fvg_zone(
         if pd.isna(upper):
             continue
 
-        if mitigation_type == 'wick':
-            # Bullish FVG (upper > lower): low <= lower → mitigated
-            # Bearish FVG (upper > lower but different meaning): high >= upper → mitigated
-            # Distinguish by checking which side the gap is on
-            if row['high'] >= upper:
-                # Bearish FVG mitigated: price rises into the gap
-                df.iloc[j, [fvg_upper_col, fvg_lower_col, fvg_volume_col]] = np.nan
-                df.iloc[j, df.columns.get_loc('fvg_active')] = False
-            elif row['low'] <= lower:
-                # Bullish FVG mitigated: price drops into the gap
-                df.iloc[j, [fvg_upper_col, fvg_lower_col, fvg_volume_col]] = np.nan
-                df.iloc[j, df.columns.get_loc('fvg_active')] = False
-        else:  # body
-            if row['close'] >= upper or row['close'] <= lower:
-                df.iloc[j, [fvg_upper_col, fvg_lower_col, fvg_volume_col]] = np.nan
-                df.iloc[j, df.columns.get_loc('fvg_active')] = False
+        if direction == 'bullish':
+            # Bullish FVG: mitigated when price drops into the gap
+            if mitigation_type == 'wick':
+                mitigated = row['low'] <= lower
+            else:  # body
+                mitigated = row['close'] <= lower
+        else:  # bearish
+            # Bearish FVG: mitigated when price rises into the gap
+            if mitigation_type == 'wick':
+                mitigated = row['high'] >= upper
+            else:  # body
+                mitigated = row['close'] >= upper
 
-        # If mitigated, also NaN all subsequent rows (kill the zone entirely)
-        if pd.isna(df.iloc[j, fvg_upper_col]):
+        if mitigated:
+            df.iloc[j, [fvg_upper_col, fvg_lower_col, fvg_volume_col]] = np.nan
+            df.iloc[j, df.columns.get_loc('fvg_active')] = False
             for k in range(j + 1, n):
                 if not pd.isna(df.iloc[k, fvg_upper_col]):
                     df.iloc[k, [fvg_upper_col, fvg_lower_col, fvg_volume_col]] = np.nan
@@ -368,28 +366,29 @@ def _has_bos(df: pd.DataFrame, ob_idx: int, impulse_end_idx: int, direction: str
     """
     Verify Break of Structure: the impulse breaks the prior swing point.
 
-    Args:
-        df: DataFrame with swing_high, swing_low columns
-        ob_idx: Index of the OB candle
-        impulse_end_idx: Last candle of the impulse
-        direction: 'bullish' — impulse breaks prior high
-                   'bearish' — impulse breaks prior low
+    If no prior swing points are found (insufficient data), falls back to
+    checking against the max/min of all prior candles.
     """
-    # Find prior swing highs/lows before the OB
     prior_swing_highs = df.loc[:ob_idx - 1, 'swing_high_price'].dropna()
     prior_swing_lows = df.loc[:ob_idx - 1, 'swing_low_price'].dropna()
 
-    # Impulse candles
     impulse_highs = df.loc[ob_idx + 1:impulse_end_idx, 'high']
     impulse_lows = df.loc[ob_idx + 1:impulse_end_idx, 'low']
 
     if direction == 'bullish':
-        if prior_swing_highs.empty or impulse_highs.empty:
-            return False
+        if prior_swing_highs.empty:
+            # Fallback: compare against prior candle range
+            prior_all_highs = df.loc[:ob_idx - 1, 'high']
+            if prior_all_highs.empty or impulse_highs.empty:
+                return True  # Not enough data to refute — accept
+            return impulse_highs.max() > prior_all_highs.max()
         return impulse_highs.max() > prior_swing_highs.max()
     else:
-        if prior_swing_lows.empty or impulse_lows.empty:
-            return False
+        if prior_swing_lows.empty:
+            prior_all_lows = df.loc[:ob_idx - 1, 'low']
+            if prior_all_lows.empty or impulse_lows.empty:
+                return True
+            return impulse_lows.min() < prior_all_lows.min()
         return impulse_lows.min() < prior_swing_lows.min()
 
 

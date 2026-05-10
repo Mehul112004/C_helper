@@ -60,7 +60,9 @@ def detect_choch(
 
     # Initialize event columns
     for col in ['event_choch_bullish', 'event_choch_bearish',
-                'event_bos_bullish', 'event_bos_bearish']:
+                'event_bos_bullish', 'event_bos_bearish',
+                'event_choch_bullish_recent', 'event_choch_bearish_recent',
+                'event_bos_bullish_recent', 'event_bos_bearish_recent']:
         df[col] = False
 
     if n < pivot_bars * 2 + 4:
@@ -252,6 +254,7 @@ def detect_liquidity_sweep(
 
     df['event_sweep_bullish'] = False
     df['event_sweep_bearish'] = False
+    df['event_sweep_recent'] = False
 
     if n < pivot_bars * 2 + 2:
         return df
