@@ -497,21 +497,90 @@ class BaseStrategy(ABC):
     def calculate_tp(self, signal: SetupSignal, candles: list[Candle], atr: float, sr_zones: list[dict] = None) -> tuple:
         """
         Override to customize take-profit calculation.
-        Default: Risk-based TP at 1.5R and 3.0R from structural stop.
-        Returns (tp1, tp2).
+        Default: Risk-based TP at 1.5R and 3.0R, compressed to nearest zone.
+
+        If a reliable S/R zone sits between entry and the 1.5R target,
+        TP1 is set to the zone boundary (front-running the reversal point).
+        This captures profits before price hits structural resistance/support.
         """
         entry = signal.entry if signal.entry is not None else candles[-1].close
         sl = signal.sl if signal.sl is not None else self.calculate_sl(signal, candles, atr)
         risk = abs(entry - sl)
         risk = max(risk, atr * 0.2)  # Fallback floor
+
         if signal.direction == "LONG":
-            return (round(entry + (1.5 * risk), 8), round(entry + (3.0 * risk), 8))
+            tp1 = round(entry + (1.5 * risk), 8)
+            tp2 = round(entry + (3.0 * risk), 8)
+
+            # ── Adaptive: cap TP1 at nearest resistance zone ──
+            if sr_zones:
+                resistances = [
+                    z for z in sr_zones
+                    if z.get('zone_type') in ('resistance', 'both')
+                    and z.get('strength_score', 0) >= 0.3
+                    and z.get('zone_lower', 0) > entry
+                    and z.get('zone_lower', 0) < tp2
+                ]
+                if resistances:
+                    nearest = min(resistances, key=lambda z: z['zone_lower'])
+                    zone_tp = nearest['zone_lower']  # TP at lower edge of resistance
+                    # Only use if better than 1R (risk-reward floor)
+                    if zone_tp > entry + risk:
+                        tp1 = round(zone_tp, 8)
         else:
-            return (round(entry - (1.5 * risk), 8), round(entry - (3.0 * risk), 8))
+            tp1 = round(entry - (1.5 * risk), 8)
+            tp2 = round(entry - (3.0 * risk), 8)
+
+            if sr_zones:
+                supports = [
+                    z for z in sr_zones
+                    if z.get('zone_type') in ('support', 'both')
+                    and z.get('strength_score', 0) >= 0.3
+                    and z.get('zone_upper', 0) < entry
+                    and z.get('zone_upper', 0) > tp2
+                ]
+                if supports:
+                    nearest = max(supports, key=lambda z: z['zone_upper'])
+                    zone_tp = nearest['zone_upper']
+                    if zone_tp < entry - risk:
+                        tp1 = round(zone_tp, 8)
+
+        return (tp1, tp2)
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         """Override to skip LLM confirmation for this strategy. Default: True."""
         return True
+
+    def htf_trend_filter(self, df: pd.DataFrame, signal_row: pd.Series,
+                         direction: str, htf_name: str = '4h') -> bool:
+        """
+        Post-signal HTF trend gate. Returns True if signal aligns with HTF trend.
+
+        Default: LONG requires HTF close > HTF EMA50, SHORT requires close < EMA50.
+        Override for strategy-specific HTF logic.
+
+        Strategies that want this MUST declare 'ema' in required_features with
+        a period matching the higher timeframe window (~50).
+        """
+        ema_col = f'ema_50'
+        # Use the signal row's position in df, not the last row
+        try:
+            row_idx = signal_row.name  # DataFrame index label of the signal row
+        except (AttributeError, KeyError):
+            return True  # Can't locate row → don't block
+        if ema_col not in df.columns or pd.isna(df.at[row_idx, ema_col]):
+            return True  # No HTF data → don't block
+
+        htf_close = signal_row.get('close', df.at[row_idx, 'close'])
+        htf_ema50 = df.at[row_idx, ema_col]
+
+        if pd.isna(htf_ema50):
+            return True
+
+        if direction == 'LONG':
+            return htf_close > htf_ema50
+        else:
+            return htf_close < htf_ema50
 
 
 # ── Phase 4: NaN Guard Utilities ──

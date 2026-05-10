@@ -138,6 +138,11 @@ class BacktestEngine:
             ts = pd.Timestamp(t)
             time_index[ts] = i
 
+        # Position management: track the bar index where the last trade was entered.
+        # Skip signals within COOLDOWN_BARS of any open trade.
+        COOLDOWN_BARS = 5
+        last_entry_bar = -COOLDOWN_BARS  # enough back to allow first signal
+
         for trade_num, signal in enumerate(signals, start=1):
             entry = signal.entry or signal.timestamp
             sl = signal.sl
@@ -156,16 +161,49 @@ class BacktestEngine:
                 diffs = np.abs(times.astype('datetime64[ns]') - np.datetime64(sig_time_naive))
                 entry_idx = int(np.argmin(diffs))
 
-            entry_price = signal.entry if signal.entry else closes[entry_idx]
-
-            # Skip if entry is after last bar
+            # Skip if entry is at or after last bar
             if entry_idx >= len(candle_df) - 1:
                 continue
 
-            # Forward slice from the bar AFTER entry
-            fwd_start = entry_idx + 1
+            # Skip if within cooldown window of last trade entry
+            if entry_idx < last_entry_bar + COOLDOWN_BARS:
+                continue
+
+            # Use next bar's open as entry (realistic: you can't trade the signal bar's close)
+            # Adjust SL/TP distances to maintain original risk structure
+            next_idx = entry_idx + 1
+            original_entry = signal.entry if signal.entry else closes[entry_idx]
+            entry_price = float(candle_df.iloc[next_idx]['open'])
+
+            # Recalculate SL and TP using the shifted entry, preserving the original risk
+            original_risk = abs(original_entry - sl)
+            if signal.direction == 'LONG':
+                entry_slippage = entry_price - original_entry
+                sl = round(sl + entry_slippage, 8)
+                tp1 = round(tp1 + entry_slippage, 8) if tp1 else tp1
+                tp2 = round(tp2 + entry_slippage, 8) if tp2 else tp2
+            else:
+                entry_slippage = original_entry - entry_price
+                sl = round(sl - entry_slippage, 8)
+                tp1 = round(tp1 - entry_slippage, 8) if tp1 else tp1
+                tp2 = round(tp2 - entry_slippage, 8) if tp2 else tp2
+
+            # Minimum RR gate: skip trades where TP1 risk/reward falls below 1.0
+            # (slippage can compress RR below breakeven)
+            new_risk = abs(entry_price - sl)
+            if new_risk <= 0 or not tp1:
+                continue
+            tp1_rr = abs(tp1 - entry_price) / new_risk
+            if tp1_rr < 1.0:
+                continue
+
+            # Forward slice from the bar AFTER the new entry
+            fwd_start = next_idx + 1
             fwd_highs = highs[fwd_start:]
             fwd_lows = lows[fwd_start:]
+
+            # Mark cooldown start
+            last_entry_bar = entry_idx
             fwd_times = times[fwd_start:]
 
             if len(fwd_highs) == 0:
@@ -241,8 +279,8 @@ class BacktestEngine:
             else:
                 rr_ratio = 0
 
-            # Duration
-            entry_datetime = pd.Timestamp(times[entry_idx]).to_pydatetime()
+            # Duration — entry is at next bar's open (realistic fill model)
+            entry_datetime = pd.Timestamp(times[next_idx]).to_pydatetime()
             duration_mins = (exit_time - entry_datetime).total_seconds() / 60.0
 
             trades.append({

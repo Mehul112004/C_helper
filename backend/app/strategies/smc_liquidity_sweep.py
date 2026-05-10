@@ -32,7 +32,7 @@ class SMCLiquiditySweepStrategy(BaseStrategy):
         "Detects liquidity sweeps (turtle soup) with confluence scoring: "
         "sweep event + volume climax + close recovery + RSI + FVG."
     )
-    timeframes = ["5m", "15m"]
+    timeframes = ["15m"]  # 5m removed: too noisy for sweep structure
     version = "2.0"
     min_confidence = 0.70
 

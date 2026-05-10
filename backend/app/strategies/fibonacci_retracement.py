@@ -54,9 +54,11 @@ class FibonacciRetracementStrategy(BaseStrategy):
     version = "2.0"
     min_confidence = 0.60
 
-    # ── Phase 2: Feature Declaration (deferred — extraction layer swing detection
-    # incompatible with Fibonacci retracement entry logic. Revert to v1 scan()
-    # until extraction layer produces swing points matching inline detection.)
+    # ── Phase 2: Feature Declaration (deferred)
+    # Extraction layer swing detection produces different swing pairs than
+    # what the inline build_swing_map produces. Requires calibration to
+    # match the specific pivot_n, lookback, and validation logic of the
+    # original Fibonacci entry algorithm. Revert to v1 scan() until then.
     required_features = []
 
     # --- Configuration ---
@@ -640,7 +642,7 @@ class FibonacciRetracementStrategy(BaseStrategy):
         """
         from app.core.fractals import detect_swing_points_df
 
-        df = detect_swing_points_df(df, pivot_n=self.PIVOT_BARS)
+        df = detect_swing_points_df(df, pivot_n=2, price_tolerance=0.001)
         n = len(df)
 
         df['signal'] = 0

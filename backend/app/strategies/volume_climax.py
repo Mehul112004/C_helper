@@ -12,7 +12,7 @@ from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
 class VolumeClimaxStrategy(BaseStrategy):
     name = "Volume Climax"
     description = "Detects institutional stopping volume or climax buying for trend reversals."
-    timeframes = ["5m", "15m", "1h"]
+    timeframes = ["15m", "1h"]  # 5m removed: volume patterns unreliable at this speed
     version = "1.1"
     min_confidence = 0.55
 

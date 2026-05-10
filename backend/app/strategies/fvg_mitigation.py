@@ -36,10 +36,12 @@ class FVGMitigationStrategy(BaseStrategy):
     version = "3.0"
     min_confidence = 0.60  # Lowered: single-zone V1 contract reduces FVG count
 
-    # ── Phase 2: Feature Declaration (deferred — single-zone V1 contract
-    # in extract_fvgs only tracks most recent FVG, reducing signal count
-    # from 50-100 to 0-4. Revert to v1 scan() until multi-zone extraction
-    # is supported.)
+    # ── Phase 2: Feature Declaration (deferred)
+    # Multi-zone FVG tracking works (5 simultaneous zones) but the extraction
+    # layer detects FVGs with different boundaries than the inline detector,
+    # causing the price-in-zone + rejection wick gates to mismatch. The inline
+    # scan() was tuned over months for specific FVG boundary sensitivity.
+    # Revert to v1 scan() until extraction layer boundaries are calibrated.
     required_features = []
 
     # ── Phase 2: Weighted Scoring Matrix ──
@@ -59,20 +61,25 @@ class FVGMitigationStrategy(BaseStrategy):
           - Volume confirmation (+0.08)
           - Double confluence (price in both FVG and OB zone, +0.05)
         """
-        # ── Hard Gate 1: FVG active ──
+        # ── Hard Gate 1: Any FVG active ──
         fvg_active = df['fvg_active'].notna() & (df['fvg_active'] == True)
 
-        # ── Hard Gate 2: Price inside FVG zone ──
-        fvg_upper_ok = df['fvg_upper'].notna()
-        fvg_lower_ok = df['fvg_lower'].notna()
-        in_fvg_zone = (
-            fvg_upper_ok & fvg_lower_ok &
-            (
-                ((df['low'] >= df['fvg_lower']) & (df['low'] <= df['fvg_upper'])) |
-                ((df['close'] >= df['fvg_lower']) & (df['close'] <= df['fvg_upper']))
-            )
-        )
-        base_setup = fvg_active & in_fvg_zone
+        # ── Hard Gate 2: Price inside ANY active FVG zone (multi-zone check) ──
+        # Check all numbered zone slots (0-4) and the derived nearest zone column
+        in_any_zone = pd.Series(False, index=df.index)
+        for zi in range(5):
+            active_col = f'fvg_{zi}_active'
+            if active_col in df.columns:
+                zi_active = df[active_col].notna() & (df[active_col] == True)
+                upper_val = df.get(f'fvg_{zi}_upper')
+                lower_val = df.get(f'fvg_{zi}_lower')
+                if upper_val is not None and lower_val is not None:
+                    in_this_zone = zi_active & (
+                        ((df['low'] >= lower_val) & (df['low'] <= upper_val)) |
+                        ((df['close'] >= lower_val) & (df['close'] <= upper_val))
+                    )
+                    in_any_zone = in_any_zone | in_this_zone
+        base_setup = fvg_active & in_any_zone
 
         # ── Direction: bullish FVG = upper > lower (gap above), bearish = upper < lower doesn't apply ──
         # Both bullish and bearish FVGs have upper > lower. We use price context:

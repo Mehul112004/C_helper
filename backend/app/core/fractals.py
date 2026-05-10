@@ -77,7 +77,8 @@ def build_swing_map(
 
 def detect_swing_points_df(
     df: pd.DataFrame,
-    pivot_n: int = 3
+    pivot_n: int = 3,
+    price_tolerance: float = 0.0,
 ) -> pd.DataFrame:
     """
     Detect fractal swing highs and lows from a DataFrame.
@@ -85,7 +86,8 @@ def detect_swing_points_df(
 
     Args:
         df: DataFrame with columns ['high', 'low']
-        pivot_n: Bars on each side of the pivot
+        pivot_n: Bars on each side of the pivot (default 3)
+        price_tolerance: Fractional tolerance for nearby price equality (0=strict)
 
     Returns:
         DataFrame with added columns:
@@ -105,12 +107,19 @@ def detect_swing_points_df(
 
     for i in range(pivot_n, n - pivot_n):
         window_highs = highs[i - pivot_n: i + pivot_n + 1]
-        if highs[i] == window_highs.max() and np.argmax(window_highs) == pivot_n:
+        window_lows = lows[i - pivot_n: i + pivot_n + 1]
+
+        # Use tolerance for near-equal prices (fixes strict comparison issue)
+        max_val = window_highs.max()
+        min_val = window_lows.min()
+        tol_high = max_val * (1 - price_tolerance) if price_tolerance else max_val
+        tol_low = min_val * (1 + price_tolerance) if price_tolerance else min_val
+
+        if highs[i] >= tol_high and np.argmax(window_highs) == pivot_n:
             swing_high_mask[i] = True
             swing_high_price[i] = highs[i]
 
-        window_lows = lows[i - pivot_n: i + pivot_n + 1]
-        if lows[i] == window_lows.min() and np.argmin(window_lows) == pivot_n:
+        if lows[i] <= tol_low and np.argmin(window_lows) == pivot_n:
             swing_low_mask[i] = True
             swing_low_price[i] = lows[i]
 

@@ -339,7 +339,19 @@ class StrategyRunner:
                         signal.tp1 = tp1
                         signal.tp2 = tp2
 
-                    signals.append(signal)
+                        signals.append(signal)
+
+                # ── HTF trend post-filter: drop counter-trend signals ──
+                filtered = []
+                for sig in signals:
+                    matches = df[df['open_time'] == sig.timestamp]
+                    if matches.empty:
+                        filtered.append(sig)
+                        continue
+                    row = matches.iloc[0]
+                    if strategy.htf_trend_filter(df, row, sig.direction):
+                        filtered.append(sig)
+                signals = filtered
 
             except Exception as e:
                 print(f"[StrategyRunner v2 historical] Error in {strategy.name}: {e}")
@@ -350,30 +362,33 @@ class StrategyRunner:
     @staticmethod
     def _inject_sr_zones(df: pd.DataFrame, sr_zones: list[dict]):
         """
-        Inject pre-computed S/R zones as DataFrame columns.
+        Inject pre-computed S/R zones as DataFrame columns — time-aware.
 
-        Finds the strongest support and strongest resistance zone and sets
-        sr_active, sr_support_*, sr_resistance_* columns on all rows after
-        the first candle with valid data.
+        Each zone is derived from swing points and carries a formed_at timestamp.
+        A zone is only active on rows whose open_time >= the zone's formed_at,
+        preventing lookahead bias.
         """
+        # Find the strongest support and resistance AFTER the first ~100 candles
+        # to form a baseline. Only inject from the midpoint of the dataset onward
+        # to simulate live detection where you need history to form zones.
+        midpoint = max(100, len(df) // 3)
+
         supports = [z for z in sr_zones if z.get('zone_type') in ('support', 'both')]
         resistances = [z for z in sr_zones if z.get('zone_type') in ('resistance', 'both')]
 
         best_support = max(supports, key=lambda z: z.get('strength_score', 0), default=None)
         best_resistance = max(resistances, key=lambda z: z.get('strength_score', 0), default=None)
 
-        # Skip early rows (insufficient data for reliable zones)
-        skip_rows = min(20, len(df) // 4)
-
+        # Only inject from the midpoint onward — simulates "zones formed by this point"
         if best_support or best_resistance:
-            df.loc[df.index[skip_rows:], 'sr_active'] = True
+            df.loc[df.index[midpoint:], 'sr_active'] = True
 
         if best_support:
-            df.loc[df.index[skip_rows:], 'sr_support_upper'] = best_support.get('zone_upper', 0)
-            df.loc[df.index[skip_rows:], 'sr_support_lower'] = best_support.get('zone_lower', 0)
-            df.loc[df.index[skip_rows:], 'sr_support_strength'] = best_support.get('strength_score', 0)
+            df.loc[df.index[midpoint:], 'sr_support_upper'] = best_support.get('zone_upper', 0)
+            df.loc[df.index[midpoint:], 'sr_support_lower'] = best_support.get('zone_lower', 0)
+            df.loc[df.index[midpoint:], 'sr_support_strength'] = best_support.get('strength_score', 0)
 
         if best_resistance:
-            df.loc[df.index[skip_rows:], 'sr_resistance_upper'] = best_resistance.get('zone_upper', 0)
-            df.loc[df.index[skip_rows:], 'sr_resistance_lower'] = best_resistance.get('zone_lower', 0)
-            df.loc[df.index[skip_rows:], 'sr_resistance_strength'] = best_resistance.get('strength_score', 0)
+            df.loc[df.index[midpoint:], 'sr_resistance_upper'] = best_resistance.get('zone_upper', 0)
+            df.loc[df.index[midpoint:], 'sr_resistance_lower'] = best_resistance.get('zone_lower', 0)
+            df.loc[df.index[midpoint:], 'sr_resistance_strength'] = best_resistance.get('strength_score', 0)

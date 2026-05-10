@@ -17,7 +17,9 @@ Extension columns per zone type:
 CRITICAL DESIGN CHOICES:
   - Masked Forward-Filling: ffill for persistence, mitigation mask for death
   - Lookahead Bias Prevention: active flag shifted by +1
-  - Single-Zone V1 Contract: only most recently formed unmitigated zone tracked
+  - Masked Forward-Filling: ffill for persistence, mitigation mask for death
+  - Lookahead Bias Prevention: active flag shifted by +1
+  - Multi-Zone V2 Contract: tracks up to 5 simultaneous zones
   - S/R zones do NOT use the kill-switch pattern (handled in sr_engine.py)
 """
 
@@ -28,6 +30,8 @@ from typing import Optional
 from app.core.indicators import compute_atr
 from app.core.fractals import detect_swing_points_df, build_swing_list, determine_trend_from_swings
 
+MAX_ZONES = 5  # Max simultaneous FVGs/OBs tracked
+
 
 # ── FVG Extraction ──
 
@@ -35,44 +39,132 @@ def extract_fvgs(
     df: pd.DataFrame,
     mitigation_type: str = 'wick',
     lookback: int = 50,
+    max_zones: int = MAX_ZONES,
 ) -> pd.DataFrame:
     """
-    Extract Fair Value Gaps from price action.
+    Extract Fair Value Gaps from price action. V2: Multi-zone tracking.
 
-    Returns the MOST RECENTLY FORMED unmitigated FVG only (V1 single-zone contract).
-    If a new FVG forms while an older one is still active, the older one is
-    dropped from tracking.
+    Tracks up to max_zones simultaneous FVGs. Each zone has its own
+    lifecycle (birth → active → mitigated).
 
-    Algorithm: For each 3-candle window (i-2, i-1, i):
-      Bullish FVG: candle[i].low > candle[i-2].high
-      Bearish FVG: candle[i].high < candle[i-2].low
+    Contract columns (backward-compatible):
+      fvg_active:   bool — True if ANY zone is active
+      fvg_upper:    float64 — upper boundary of NEAREST active zone to close
+      fvg_lower:    float64 — lower boundary of NEAREST active zone to close
+      fvg_volume:   float64 — volume of the nearest zone's impulse candle
+      fvg_zone_count: int — number of active zones
+      fvg_{N}_{col}: per-zone columns for individual zone inspection
 
     Args:
-        df: DataFrame with columns [open, high, low, close, volume, open_time]
-        mitigation_type: 'wick' (default) — high/low touches zone → mitigated
-                         'body' — close enters zone → mitigated
-        lookback: How many candles to scan backward from the end
-
-    Returns:
-        DataFrame with added columns:
-            fvg_active:   bool
-            fvg_upper:    float64
-            fvg_lower:    float64
-            fvg_volume:   float64
-            fvg_created_at: datetime64
+        df: DataFrame with [open, high, low, close, volume, open_time]
+        mitigation_type: 'wick' (default) or 'body'
+        lookback: How many candles to scan backward
+        max_zones: How many simultaneous zones to track (default 5)
     """
     df = df.copy()
     n = len(df)
 
-    # Initialize columns
+    # Initialize derived columns
     df['fvg_active'] = False
     df['fvg_upper'] = np.nan
     df['fvg_lower'] = np.nan
     df['fvg_volume'] = np.nan
     df['fvg_created_at'] = pd.NaT
+    df['fvg_zone_count'] = 0
+
+    # Initialize per-zone columns
+    for zi in range(max_zones):
+        prefix = f'fvg_{zi}_'
+        df[f'{prefix}active'] = False
+        df[f'{prefix}upper'] = np.nan
+        df[f'{prefix}lower'] = np.nan
+        df[f'{prefix}volume'] = np.nan
+        df[f'{prefix}created_at'] = pd.NaT
 
     if n < 3:
         return df
+
+    scan_start = max(0, n - lookback)
+    zone_fill_order = []  # Tracks which slots are in use (oldest first)
+
+    for i in range(scan_start + 2, n):
+        c1 = df.iloc[i - 2]
+        c2 = df.iloc[i - 1]
+        c3 = df.iloc[i]
+
+        upper_val = None
+        lower_val = None
+        direction = None
+
+        if c3['low'] > c1['high']:
+            upper_val, lower_val, direction = c3['low'], c1['high'], 'bullish'
+        elif c3['high'] < c1['low']:
+            upper_val, lower_val, direction = c1['low'], c3['high'], 'bearish'
+
+        if upper_val is None:
+            continue
+
+        # Check if already mitigated by any intervening candle
+        already_mitigated = False
+        for k in range(i + 1, n):
+            row = df.iloc[k]
+            if mitigation_type == 'wick':
+                if (direction == 'bullish' and row['low'] <= lower_val) or \
+                   (direction == 'bearish' and row['high'] >= upper_val):
+                    already_mitigated = True
+                    break
+            else:
+                if (direction == 'bullish' and row['close'] <= lower_val) or \
+                   (direction == 'bearish' and row['close'] >= upper_val):
+                    already_mitigated = True
+                    break
+
+        if already_mitigated:
+            continue
+
+        # Find an available slot
+        zone_idx = None
+        for zi in range(max_zones):
+            if zi not in zone_fill_order or df.iloc[i][f'fvg_{zi}_active'] == False:
+                zone_idx = zi
+                break
+
+        if zone_idx is None:
+            # All slots full — overwrite oldest
+            zone_idx = zone_fill_order.pop(0)
+
+        # Apply zone to this slot
+        _apply_fvg_zone_slot(df, i, zone_idx, upper_val, lower_val, c2['volume'],
+                              c3['open_time'], mitigation_type, direction, n)
+
+        # Track slot ordering
+        if zone_idx in zone_fill_order:
+            zone_fill_order.remove(zone_idx)
+        zone_fill_order.append(zone_idx)
+
+        # Trim to max_zones
+        while len(zone_fill_order) > max_zones:
+            oldest = zone_fill_order.pop(0)
+
+    # ── Derive backward-compatible columns ──
+    for row_i in range(n):
+        active_zones = []
+        for zi in range(max_zones):
+            if df.iloc[row_i][f'fvg_{zi}_active']:
+                mid = (df.iloc[row_i][f'fvg_{zi}_upper'] + df.iloc[row_i][f'fvg_{zi}_lower']) / 2
+                active_zones.append((zi, mid, abs(df.iloc[row_i]['close'] - mid)))
+
+        df.loc[row_i, 'fvg_zone_count'] = len(active_zones)
+        if active_zones:
+            # Pick nearest zone to current close
+            nearest_zi = min(active_zones, key=lambda x: x[2])[0]
+            df.loc[row_i, 'fvg_active'] = True
+            df.loc[row_i, 'fvg_upper'] = df.iloc[row_i][f'fvg_{nearest_zi}_upper']
+            df.loc[row_i, 'fvg_lower'] = df.iloc[row_i][f'fvg_{nearest_zi}_lower']
+            df.loc[row_i, 'fvg_volume'] = df.iloc[row_i][f'fvg_{nearest_zi}_volume']
+            df.loc[row_i, 'fvg_created_at'] = df.iloc[row_i][f'fvg_{nearest_zi}_created_at']
+
+    return df
 
     # Scan from the end backward within lookback window
     scan_start = max(0, n - lookback)
@@ -131,81 +223,81 @@ def extract_fvgs(
     return df
 
 
-def _apply_fvg_zone(
+def _apply_fvg_zone_slot(
     df: pd.DataFrame,
     formation_idx: int,
+    zone_idx: int,
     upper_val: float,
     lower_val: float,
     volume_val: float,
     time_val,
     mitigation_type: str,
-    direction: str = 'bullish',
+    direction: str,
+    n: int,
 ):
     """
-    Apply a single FVG zone using masked forward-filling.
-
-    Step 1: Set boundaries at formation candle (index i)
-    Step 2: Forward-fill so zone persists across time
-    Step 3: Shift active flag by +1 (lookahead bias defense)
-    Step 4: Kill zone on mitigation
-    Step 5: Recompute active from NaN state
+    Apply an FVG zone to a specific slot (0-max_zones).
+    Same masked ffill + mitigation state machine, but scoped to one slot.
     """
-    n = len(df)
+    prefix = f'fvg_{zone_idx}_'
+    active_col = f'{prefix}active'
+    upper_col = f'{prefix}upper'
+    lower_col = f'{prefix}lower'
+    volume_col = f'{prefix}volume'
+    created_col = f'{prefix}created_at'
 
-    # Overwrites any prior zone (single-zone V1 contract)
     # Step 1: Set at formation candle
-    df.iloc[formation_idx, df.columns.get_loc('fvg_upper')] = upper_val
-    df.iloc[formation_idx, df.columns.get_loc('fvg_lower')] = lower_val
-    df.iloc[formation_idx, df.columns.get_loc('fvg_volume')] = volume_val
-    df.iloc[formation_idx, df.columns.get_loc('fvg_created_at')] = time_val
+    df.iloc[formation_idx, df.columns.get_loc(upper_col)] = upper_val
+    df.iloc[formation_idx, df.columns.get_loc(lower_col)] = lower_val
+    df.iloc[formation_idx, df.columns.get_loc(volume_col)] = volume_val
+    df.iloc[formation_idx, df.columns.get_loc(created_col)] = time_val
 
     # Step 2: Forward-fill from formation onward
-    fvg_upper_col = df.columns.get_loc('fvg_upper')
-    fvg_lower_col = df.columns.get_loc('fvg_lower')
-    fvg_volume_col = df.columns.get_loc('fvg_volume')
-    fvg_created_col = df.columns.get_loc('fvg_created_at')
-
-    for col_idx in [fvg_upper_col, fvg_lower_col, fvg_volume_col, fvg_created_col]:
-        df.iloc[formation_idx:, col_idx] = df.iloc[formation_idx:, col_idx].ffill()
+    for col in [upper_col, lower_col, volume_col, created_col]:
+        ci = df.columns.get_loc(col)
+        df.iloc[formation_idx:, ci] = df.iloc[formation_idx:, ci].ffill()
 
     # Step 3: Shift active flag by +1
-    # Zone becomes active on candle AFTER formation (when confirming candle closes)
     active_start = formation_idx + 1
     if active_start < n:
-        df.iloc[active_start:, df.columns.get_loc('fvg_active')] = df.iloc[
-            formation_idx:, df.columns.get_loc('fvg_upper')
-        ].notna().values[0]
+        df.iloc[active_start:, df.columns.get_loc(active_col)] = True
 
     # Step 4: Mitigation kill switch
+    uc = df.columns.get_loc(upper_col)
+    lc = df.columns.get_loc(lower_col)
+    vc = df.columns.get_loc(volume_col)
+    ac = df.columns.get_loc(active_col)
+
     for j in range(formation_idx + 1, n):
-        row = df.iloc[j]
-        upper = row['fvg_upper']
-        lower = row['fvg_lower']
+        upper = df.iloc[j, uc]
+        lower = df.iloc[j, lc]
 
         if pd.isna(upper):
             continue
 
         if direction == 'bullish':
-            # Bullish FVG: mitigated when price drops into the gap
-            if mitigation_type == 'wick':
-                mitigated = row['low'] <= lower
-            else:  # body
-                mitigated = row['close'] <= lower
-        else:  # bearish
-            # Bearish FVG: mitigated when price rises into the gap
-            if mitigation_type == 'wick':
-                mitigated = row['high'] >= upper
-            else:  # body
-                mitigated = row['close'] >= upper
+            mitigated = df.iloc[j]['low'] <= lower if mitigation_type == 'wick' else df.iloc[j]['close'] <= lower
+        else:
+            mitigated = df.iloc[j]['high'] >= upper if mitigation_type == 'wick' else df.iloc[j]['close'] >= upper
 
         if mitigated:
-            df.iloc[j, [fvg_upper_col, fvg_lower_col, fvg_volume_col]] = np.nan
-            df.iloc[j, df.columns.get_loc('fvg_active')] = False
+            df.iloc[j, [uc, lc, vc]] = np.nan
+            df.iloc[j, ac] = False
             for k in range(j + 1, n):
-                if not pd.isna(df.iloc[k, fvg_upper_col]):
-                    df.iloc[k, [fvg_upper_col, fvg_lower_col, fvg_volume_col]] = np.nan
-                    df.iloc[k, df.columns.get_loc('fvg_active')] = False
+                if not pd.isna(df.iloc[k, uc]):
+                    df.iloc[k, [uc, lc, vc]] = np.nan
+                    df.iloc[k, ac] = False
             break
+
+
+def _apply_fvg_zone(
+    df: pd.DataFrame, formation_idx: int,
+    upper_val: float, lower_val: float, volume_val: float, time_val,
+    mitigation_type: str, direction: str = 'bullish',
+):
+    """Legacy wrapper — delegates to slot 0 for backward compatibility."""
+    _apply_fvg_zone_slot(df, formation_idx, 0, upper_val, lower_val, volume_val,
+                           time_val, mitigation_type, direction, len(df))
 
 
 # ── Order Block Extraction ──
