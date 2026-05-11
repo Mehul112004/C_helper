@@ -44,7 +44,7 @@ class BacktestEngine:
         candle_df: pd.DataFrame,
         initial_capital: float,
         risk_pct: float,
-        trail_stop: bool = True,
+        trail_stop: bool = False,  # Disabled — trailing stops hurt trend-following strategies
     ) -> list[dict]:
         """
         Resolve trade outcomes using vectorized pandas operations.

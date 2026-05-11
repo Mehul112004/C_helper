@@ -1,0 +1,39 @@
+{
+  "last_git_commit_id": "5b09030a2670c65fb5debba26617016a0527133d",
+  "date": "2026-05-11",
+  "config": {
+    "symbols": [
+      "BTCUSDT"
+    ],
+    "timeframes": [
+      "1h"
+    ],
+    "lookback_days": 90,
+    "initial_capital": 10000.0,
+    "risk_per_trade": 0.01
+  },
+  "runs": [
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Trend Following",
+      "run_id": "b49293d9-30b7-4683-ad9e-2e4daf13b019",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 87,
+        "win_rate": 37.93,
+        "total_pnl": 1701.25,
+        "total_pnl_pct": 17.01,
+        "sharpe_ratio": 2.1059,
+        "sortino_ratio": 44.5996,
+        "max_drawdown": 1064.68,
+        "max_drawdown_pct": 8.96,
+        "avg_rr": 2.0538,
+        "profit_factor": 1.3304,
+        "avg_trade_duration_mins": 2152.41,
+        "best_trade_pnl": 324.36,
+        "worst_trade_pnl": -100.0
+      }
+    }
+  ]
+}

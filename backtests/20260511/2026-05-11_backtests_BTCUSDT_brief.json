@@ -1,0 +1,130 @@
+{
+  "last_git_commit_id": "5b09030a2670c65fb5debba26617016a0527133d",
+  "date": "2026-05-11",
+  "config": {
+    "symbols": [
+      "BTCUSDT"
+    ],
+    "timeframes": [
+      "15m",
+      "1h",
+      "4h",
+      "1d"
+    ],
+    "lookback_days": 90,
+    "initial_capital": 10000.0,
+    "risk_per_trade": 0.01
+  },
+  "runs": [
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "15m",
+      "strategy_name": "Key Level Reversal",
+      "run_id": "a9443f59-8765-40b1-bd67-cdb88009e1a7",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 89,
+        "win_rate": 38.2,
+        "total_pnl": 1682.14,
+        "total_pnl_pct": 16.82,
+        "sharpe_ratio": 1.9736,
+        "sortino_ratio": 0.03,
+        "max_drawdown": 1000.0,
+        "max_drawdown_pct": 8.08,
+        "avg_rr": 2.1124,
+        "profit_factor": 1.3058,
+        "avg_trade_duration_mins": 499.72,
+        "best_trade_pnl": 309.49,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Burner 9/20",
+      "run_id": "86573340-ba67-48a5-9a54-065c187a41a0",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 125,
+        "win_rate": 34.4,
+        "total_pnl": 1035.22,
+        "total_pnl_pct": 10.35,
+        "sharpe_ratio": 0.9289,
+        "sortino_ratio": 23.0587,
+        "max_drawdown": 2067.93,
+        "max_drawdown_pct": 18.66,
+        "avg_rr": 2.0075,
+        "profit_factor": 1.1336,
+        "avg_trade_duration_mins": 2390.88,
+        "best_trade_pnl": 228.13,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Trend Following",
+      "run_id": "4b41d445-eb16-4173-940f-b2c48e313371",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 87,
+        "win_rate": 37.93,
+        "total_pnl": 1701.25,
+        "total_pnl_pct": 17.01,
+        "sharpe_ratio": 2.1059,
+        "sortino_ratio": 44.5996,
+        "max_drawdown": 1064.68,
+        "max_drawdown_pct": 8.96,
+        "avg_rr": 2.0538,
+        "profit_factor": 1.3304,
+        "avg_trade_duration_mins": 2152.41,
+        "best_trade_pnl": 324.36,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Breakout & Retest",
+      "run_id": "4e9fd40f-a0f4-4202-a51b-487ea67eb406",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 39,
+        "win_rate": 12.82,
+        "total_pnl": 109.82,
+        "total_pnl_pct": 1.1,
+        "sharpe_ratio": 0.3873,
+        "sortino_ratio": 1.3638,
+        "max_drawdown": 1400.0,
+        "max_drawdown_pct": 13.76,
+        "avg_rr": 2.0,
+        "profit_factor": 1.056,
+        "avg_trade_duration_mins": 25520.0,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Liquidity Sweep",
+      "run_id": "694413f1-9346-44a8-b574-daaad1e81428",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 24,
+        "win_rate": 41.67,
+        "total_pnl": 150.59,
+        "total_pnl_pct": 1.51,
+        "sharpe_ratio": 0.7916,
+        "sortino_ratio": 5741890500860203.0,
+        "max_drawdown": 400.0,
+        "max_drawdown_pct": 3.83,
+        "avg_rr": 1.5506,
+        "profit_factor": 1.1076,
+        "avg_trade_duration_mins": 1920.0,
+        "best_trade_pnl": 172.94,
+        "worst_trade_pnl": -100.0
+      }
+    }
+  ]
+}

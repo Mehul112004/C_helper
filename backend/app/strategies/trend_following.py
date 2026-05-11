@@ -26,8 +26,8 @@ class TrendFollowingStrategy(BaseStrategy):
         "and momentum confirmation before entry."
     )
     timeframes = ["1h"]
-    version = "3.1"
-    min_confidence = 0.60  # Tighter: 4h now requires stronger confirmation
+    version = "3.2"
+    min_confidence = 0.55
 
     allowed_regimes = ["TRENDING_UP", "TRENDING_DOWN"]
     require_htf_alignment = True
