@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import pandas as pd
+
 from app.core.base_strategy import Candle
 from app.core.sse import sse_manager
 from app.core.strategy_runner import StrategyRunner
@@ -321,7 +323,7 @@ class LiveScanner:
                     ).all()
                     sr_zones = [z.to_dict() for z in zones]
 
-                # 5. Build candle window (last 50)
+                # 5. Build candle window for context logging
                 db_candles = (
                     CandleModel.query
                     .filter_by(symbol=symbol, timeframe=timeframe)
@@ -336,40 +338,33 @@ class LiveScanner:
 
                 candle_objects = [Candle.from_db_row(c.to_dict()) for c in reversed(db_candles)]
 
-                # Build indicators snapshot at last index
+                # Build indicators snapshot for logging
                 series = indicator_result.get('series', {})
                 candle_count = indicator_result.get('candle_count', 0)
-                if candle_count > 0 and series:
-                    indicators = StrategyRunner.prepare_indicators_snapshot(series, candle_count - 1)
-                else:
-                    print(f"[LiveScanner]    ⚠ No series data (candle_count={candle_count})")
-                    return
 
-                # Debug: log indicator availability
-                ind_status = []
-                if indicators.rsi_14 is not None:
-                    ind_status.append(f"RSI={indicators.rsi_14:.1f}")
-                else:
-                    ind_status.append("RSI=None")
-                if indicators.atr_14 is not None:
-                    ind_status.append(f"ATR={indicators.atr_14:.4f}")
-                else:
-                    ind_status.append("ATR=None")
-                if indicators.bb_width is not None:
-                    ind_status.append(f"BBW={indicators.bb_width:.6f}")
-                else:
-                    ind_status.append("BBW=None")
-                if indicators.volume_ma_20 is not None:
-                    ind_status.append(f"VolMA={indicators.volume_ma_20:.0f}")
-                else:
-                    ind_status.append("VolMA=None")
-                print(f"[LiveScanner]    Indicators ({candle_count} candles): {', '.join(ind_status)}")
+                if candle_count > 0 and series:
+                    def _safe_get(seq, i):
+                        if not seq or i < 0 or i >= len(seq):
+                            return None
+                        v = seq[i].get('value') if isinstance(seq[i], dict) else seq[i]
+                        if v is None or (isinstance(v, float) and pd.isna(v)):
+                            return None
+                        return float(v)
+
+                    rsi = _safe_get(series.get('rsi_14', []), candle_count - 1)
+                    atr = _safe_get(series.get('atr_14', []), candle_count - 1)
+                    ind_parts = []
+                    if rsi is not None:
+                        ind_parts.append(f"RSI={rsi:.1f}")
+                    if atr is not None:
+                        ind_parts.append(f"ATR={atr:.4f}")
+                    print(f"[LiveScanner]    Indicators ({candle_count} candles): {', '.join(ind_parts)}")
                 print(f"[LiveScanner]    S/R zones in range: {len(sr_zones)}")
 
-                # 6. Fetch HTF context
+                # 6. Fetch HTF context (for LLM context if needed later)
                 htf_candles = self._fetch_htf_candles(symbol, timeframe)
 
-                # 7. Run strategies
+                # 7. Run strategies (v3 — unified DataFrame path)
                 signals_found = 0
                 for strat_name in session.strategy_names:
                     strategy = registry.get_by_name(strat_name)
@@ -378,17 +373,16 @@ class LiveScanner:
                     if timeframe not in strategy.timeframes:
                         continue
 
-                    signal = StrategyRunner.run_single_scan(
+                    result = StrategyRunner.run_single_scan(
                         strategy=strategy,
                         symbol=symbol,
                         timeframe=timeframe,
-                        candles=candle_objects,
-                        indicators=indicators,
-                        sr_zones=sr_zones,
-                        htf_candles=htf_candles,
                     )
-
-                    if signal:
+                    if result is None:
+                        continue
+                    signal, pre_df = result
+                    if signal is None:
+                        continue
                         signals_found += 1
                         print(f"[LiveScanner]    ✅ SIGNAL: {strat_name} → {signal.direction} "
                               f"conf={signal.confidence:.2f}")

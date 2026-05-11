@@ -1,0 +1,286 @@
+{
+  "last_git_commit_id": "5b5432fe93bc07d816f8712023c52ad4d798c156",
+  "date": "2026-05-10",
+  "config": {
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT"
+    ],
+    "timeframes": [
+      "15m",
+      "1h",
+      "4h",
+      "1d"
+    ],
+    "lookback_days": 90,
+    "initial_capital": 10000.0,
+    "risk_per_trade": 0.01
+  },
+  "runs": [
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Trend Following",
+      "run_id": "501caad5-8e18-4a3c-87b3-e20b440b4409",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 85,
+        "win_rate": 40.0,
+        "total_pnl": 2632.04,
+        "total_pnl_pct": 26.32,
+        "sharpe_ratio": 3.3109,
+        "sortino_ratio": 2.8336328197186596e+16,
+        "max_drawdown": 900.0,
+        "max_drawdown_pct": 7.12,
+        "avg_rr": 2.0523,
+        "profit_factor": 1.56,
+        "avg_trade_duration_mins": 2188.94,
+        "best_trade_pnl": 324.36,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Breakout & Retest",
+      "run_id": "ab60ee74-7857-4d02-bcc7-2af3a736fcdd",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 38,
+        "win_rate": 13.16,
+        "total_pnl": 312.8,
+        "total_pnl_pct": 3.13,
+        "sharpe_ratio": 1.0992,
+        "sortino_ratio": 6.0532,
+        "max_drawdown": 1400.0,
+        "max_drawdown_pct": 13.57,
+        "avg_rr": 2.0,
+        "profit_factor": 1.1645,
+        "avg_trade_duration_mins": 25926.32,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Liquidity Sweep",
+      "run_id": "df73ec70-d5a7-4741-89f7-5c471250c38e",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 24,
+        "win_rate": 41.67,
+        "total_pnl": 150.58,
+        "total_pnl_pct": 1.51,
+        "sharpe_ratio": 0.7915,
+        "sortino_ratio": 5741509207912406.0,
+        "max_drawdown": 400.0,
+        "max_drawdown_pct": 3.83,
+        "avg_rr": 1.5506,
+        "profit_factor": 1.1076,
+        "avg_trade_duration_mins": 1920.0,
+        "best_trade_pnl": 172.94,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Trend Following",
+      "run_id": "98a1ecf1-bfb5-4c5f-be0b-c2feb7fe7b55",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 25,
+        "win_rate": 24.0,
+        "total_pnl": -283.01,
+        "total_pnl_pct": -2.83,
+        "sharpe_ratio": -1.4182,
+        "sortino_ratio": 0.0,
+        "max_drawdown": 900.0,
+        "max_drawdown_pct": 9.0,
+        "avg_rr": 2.0,
+        "profit_factor": 0.8231,
+        "avg_trade_duration_mins": 8371.2,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Trend Following",
+      "run_id": "2b21904a-aa69-4da1-9806-cdb7dff7c6c2",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 71,
+        "win_rate": 29.58,
+        "total_pnl": -800.0,
+        "total_pnl_pct": -8.0,
+        "sharpe_ratio": -1.3064,
+        "sortino_ratio": 0.0,
+        "max_drawdown": 1300.0,
+        "max_drawdown_pct": 12.38,
+        "avg_rr": 2.0,
+        "profit_factor": 0.84,
+        "avg_trade_duration_mins": 1796.62,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Breakout & Retest",
+      "run_id": "36135fca-a46c-4af7-9a69-4e22fadcd426",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 32,
+        "win_rate": 9.38,
+        "total_pnl": -465.42,
+        "total_pnl_pct": -4.65,
+        "sharpe_ratio": -2.224,
+        "sortino_ratio": -6.8386,
+        "max_drawdown": 1100.0,
+        "max_drawdown_pct": 11.0,
+        "avg_rr": 2.0177,
+        "profit_factor": 0.7282,
+        "avg_trade_duration_mins": 27120.0,
+        "best_trade_pnl": 205.31,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Liquidity Sweep",
+      "run_id": "e55e7ea3-fafc-450b-8804-fa4b4d089074",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 22,
+        "win_rate": 54.55,
+        "total_pnl": 868.23,
+        "total_pnl_pct": 8.68,
+        "sharpe_ratio": 4.9145,
+        "sortino_ratio": 3.611454284344743e+16,
+        "max_drawdown": 600.0,
+        "max_drawdown_pct": 5.52,
+        "avg_rr": 1.5569,
+        "profit_factor": 1.8682,
+        "avg_trade_duration_mins": 2138.18,
+        "best_trade_pnl": 181.73,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Trend Following",
+      "run_id": "db2bf134-d74f-4f2e-bb11-80864c5551a6",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 21,
+        "win_rate": 33.33,
+        "total_pnl": 229.71,
+        "total_pnl_pct": 2.3,
+        "sharpe_ratio": 1.2579,
+        "sortino_ratio": 8.0272,
+        "max_drawdown": 500.0,
+        "max_drawdown_pct": 4.72,
+        "avg_rr": 2.0,
+        "profit_factor": 1.1885,
+        "avg_trade_duration_mins": 8525.71,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "SOLUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Trend Following",
+      "run_id": "8dc86825-c0e7-4427-8892-3692da8ab4fe",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 81,
+        "win_rate": 20.99,
+        "total_pnl": -2920.23,
+        "total_pnl_pct": -29.2,
+        "sharpe_ratio": -4.6015,
+        "sortino_ratio": 0.0,
+        "max_drawdown": 4520.23,
+        "max_drawdown_pct": 44.32,
+        "avg_rr": 2.0469,
+        "profit_factor": 0.5437,
+        "avg_trade_duration_mins": 1867.41,
+        "best_trade_pnl": 279.77,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "SOLUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Breakout & Retest",
+      "run_id": "baeed41f-3f4e-4570-9425-4792b50bf605",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 31,
+        "win_rate": 9.68,
+        "total_pnl": -444.56,
+        "total_pnl_pct": -4.45,
+        "sharpe_ratio": -2.0188,
+        "sortino_ratio": -47.774,
+        "max_drawdown": 1600.0,
+        "max_drawdown_pct": 16.0,
+        "avg_rr": 2.0,
+        "profit_factor": 0.7634,
+        "avg_trade_duration_mins": 26585.81,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "SOLUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Liquidity Sweep",
+      "run_id": "96f57f6f-9326-4d71-82c4-736f6c0912ad",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 25,
+        "win_rate": 40.0,
+        "total_pnl": 43.27,
+        "total_pnl_pct": 0.43,
+        "sharpe_ratio": 0.2204,
+        "sortino_ratio": 0.0027,
+        "max_drawdown": 800.0,
+        "max_drawdown_pct": 7.85,
+        "avg_rr": 1.5433,
+        "profit_factor": 1.0288,
+        "avg_trade_duration_mins": 2409.6,
+        "best_trade_pnl": 168.87,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "SOLUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Trend Following",
+      "run_id": "a140baa9-ad75-41d1-8849-c2665135ab79",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 24,
+        "win_rate": 16.67,
+        "total_pnl": -1200.0,
+        "total_pnl_pct": -12.0,
+        "sharpe_ratio": -7.0993,
+        "sortino_ratio": -4.575515373552189e+16,
+        "max_drawdown": 1400.0,
+        "max_drawdown_pct": 14.0,
+        "avg_rr": 2.0,
+        "profit_factor": 0.4,
+        "avg_trade_duration_mins": 8190.0,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    }
+  ]
+}

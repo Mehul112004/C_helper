@@ -1,0 +1,39 @@
+{
+  "last_git_commit_id": "5b5432fe93bc07d816f8712023c52ad4d798c156",
+  "date": "2026-05-11",
+  "config": {
+    "symbols": [
+      "BTCUSDT"
+    ],
+    "timeframes": [
+      "1h"
+    ],
+    "lookback_days": 90,
+    "initial_capital": 10000.0,
+    "risk_per_trade": 0.01
+  },
+  "runs": [
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Burner 9/20",
+      "run_id": "2a1840c3-e152-4cb8-b0b1-ef05f90c2036",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 125,
+        "win_rate": 16.8,
+        "total_pnl": -930.12,
+        "total_pnl_pct": -9.3,
+        "sharpe_ratio": -1.0833,
+        "sortino_ratio": -18.5799,
+        "max_drawdown": 1800.0,
+        "max_drawdown_pct": 18.0,
+        "avg_rr": 2.0,
+        "profit_factor": 0.8383,
+        "avg_trade_duration_mins": 1853.28,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    }
+  ]
+}

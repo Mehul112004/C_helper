@@ -1,13 +1,15 @@
 """
-Backtesting Engine
+Backtesting Engine v3.0
+
 Core engine for running strategies against historical data and computing
 performance metrics.
 
-Hybrid approach:
-- Indicators are computed vectorized across the full dataset (fast)
-- Strategies are executed bar-by-bar via StrategyRunner.scan_historical()
-  to maintain 1:1 parity with the live engine
-- Trade outcome resolution (SL/TP hit detection) is fully vectorized
+Key design choices:
+  - Next-bar-open entry (realistic fill, no lookahead)
+  - Cooldown between trades (no signal clustering)
+  - Vectorized trade outcome resolution (SL/TP hit detection)
+  - Same-bar conflict: SL wins (conservative)
+  - RR filter: trades with < 1.0 RR after slippage are rejected
 """
 
 import json
@@ -18,8 +20,7 @@ from datetime import datetime
 from typing import Optional
 
 from app.core.base_strategy import BaseStrategy, SetupSignal
-from app.core.indicator_service import IndicatorService
-from app.core.indicators import compute_atr, compute_ema, compute_rsi, compute_macd, compute_bollinger, compute_keltner, compute_volume_ma
+from app.core.indicators import compute_atr
 from app.core.sr_engine import SREngine
 from app.core.strategy_runner import StrategyRunner
 from app.models.db import db, Candle, BacktestRun, BacktestTrade
@@ -27,76 +28,15 @@ from app.models.db import db, Candle, BacktestRun, BacktestTrade
 
 class BacktestEngine:
     """
-    Orchestrates a full backtest: data loading, indicator computation,
-    strategy execution, trade simulation, and metrics calculation.
+    Orchestrates a full backtest: data loading, strategy execution,
+    trade simulation, and metrics calculation.
     """
 
-    VALID_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
+    VALID_TIMEFRAMES = ['15m', '1h', '4h', '1d']  # Primary signal TFs
 
-    # ---------- Indicator Computation (Vectorized, no DB fetch) ----------
-
-    @staticmethod
-    def compute_indicators_from_df(df: pd.DataFrame) -> dict:
-        """
-        Compute all indicator series directly from a DataFrame.
-        Returns indicator series in the same format as IndicatorService
-        (list of {time, value} dicts) for compatibility with StrategyRunner.
-
-        Args:
-            df: DataFrame with columns [open_time, open, high, low, close, volume]
-                sorted by open_time ascending.
-
-        Returns:
-            Dict of indicator_name → list of {time, value} dicts.
-        """
-        closes = df['close']
-        highs = df['high']
-        lows = df['low']
-        volumes = df['volume']
-        timestamps = df['open_time'].dt.strftime('%Y-%m-%dT%H:%M:%SZ').tolist()
-
-        ema_9 = compute_ema(closes, 9)
-        ema_21 = compute_ema(closes, 21)
-        ema_50 = compute_ema(closes, 50)
-        ema_100 = compute_ema(closes, 100)
-        ema_200 = compute_ema(closes, 200)
-        rsi_14 = compute_rsi(closes, 14)
-        macd = compute_macd(closes, 12, 26, 9)
-        bb = compute_bollinger(closes, 20, 2.0)
-        kc = compute_keltner(highs, lows, closes, 20, 10, 1.5)
-        atr_14 = compute_atr(highs, lows, closes, 14)
-        vol_ma_20 = compute_volume_ma(volumes, 20)
-
-        def _series_to_list(series: pd.Series) -> list:
-            result = []
-            for i, val in enumerate(series):
-                if pd.notna(val):
-                    result.append({'time': timestamps[i], 'value': round(float(val), 6)})
-                else:
-                    result.append({'time': timestamps[i], 'value': None})
-            return result
-
-        return {
-            'ema_9': _series_to_list(ema_9),
-            'ema_21': _series_to_list(ema_21),
-            'ema_50': _series_to_list(ema_50),
-            'ema_100': _series_to_list(ema_100),
-            'ema_200': _series_to_list(ema_200),
-            'rsi_14': _series_to_list(rsi_14),
-            'macd_line': _series_to_list(macd['macd_line']),
-            'macd_signal': _series_to_list(macd['macd_signal']),
-            'macd_histogram': _series_to_list(macd['macd_histogram']),
-            'bb_upper': _series_to_list(bb['bb_upper']),
-            'bb_middle': _series_to_list(bb['bb_middle']),
-            'bb_lower': _series_to_list(bb['bb_lower']),
-            'bb_width': _series_to_list(bb['bb_width']),
-            'kc_upper': _series_to_list(kc['kc_upper']),
-            'kc_lower': _series_to_list(kc['kc_lower']),
-            'atr_14': _series_to_list(atr_14),
-            'volume_ma_20': _series_to_list(vol_ma_20),
-        }
-
-    # ---------- Trade Simulation (Vectorized) ----------
+    # ═══════════════════════════════════════════════════════════════
+    #  Trade Simulation (Vectorized)
+    # ═══════════════════════════════════════════════════════════════
 
     @staticmethod
     def simulate_trades(
@@ -104,6 +44,7 @@ class BacktestEngine:
         candle_df: pd.DataFrame,
         initial_capital: float,
         risk_pct: float,
+        trail_stop: bool = True,
     ) -> list[dict]:
         """
         Resolve trade outcomes using vectorized pandas operations.
@@ -232,28 +173,109 @@ class BacktestEngine:
             if tp2_bar == 0 and not tp2_hits[0]:
                 tp2_bar = -1
 
-            # Determine outcome: which level was hit first
-            candidates = []
-            if sl_bar >= 0:
-                candidates.append(('HIT_SL', sl_bar, sl))
-            if tp2_bar >= 0:
-                candidates.append(('HIT_TP2', tp2_bar, tp2))
-            if tp1_bar >= 0:
-                candidates.append(('HIT_TP1', tp1_bar, tp1))
+            # Determine outcome: which level was hit first (with trailing stop)
+            outcome = None
+            exit_price = None
+            exit_bar_offset = len(fwd_times) - 1
+            exit_time = None
 
-            if not candidates:
-                # No level hit — trade expires at end of data
-                exit_idx = len(fwd_times) - 1
-                exit_price = float(closes[fwd_start + exit_idx])
-                exit_time = pd.Timestamp(fwd_times[exit_idx]).to_pydatetime()
-                outcome = 'EXPIRED'
+            if trail_stop:
+                # ── Trailing stop logic ──
+                # Track best price since entry. At each 1R milestone, move SL.
+                best_price = entry_price
+                trailing_sl = sl  # Starts at initial SL
+                risk = abs(entry_price - sl)
+
+                for bar_idx in range(len(fwd_times)):
+                    bar_high = float(fwd_highs[bar_idx])
+                    bar_low = float(fwd_lows[bar_idx])
+
+                    if signal.direction == 'LONG':
+                        best_price = max(best_price, bar_high)
+                        profit_r = (best_price - entry_price) / risk if risk > 0 else 0
+
+                        # Trail SL at each 1R milestone (1R → BE, 2R → 1R, 3R → 2R)
+                        if profit_r >= 1.0:
+                            trailing_sl = max(trailing_sl, entry_price)  # Breakeven
+                        if profit_r >= 2.0:
+                            trailing_sl = max(trailing_sl, entry_price + 1.0 * risk)
+                        if profit_r >= 3.0:
+                            trailing_sl = max(trailing_sl, entry_price + 2.0 * risk)
+
+                        # Check if trailing SL is hit
+                        if bar_low <= trailing_sl:
+                            outcome = 'HIT_SL'
+                            exit_price = trailing_sl
+                            exit_bar_offset = bar_idx
+                            break
+                        # Check TP2
+                        if bar_high >= tp2:
+                            outcome = 'HIT_TP2'
+                            exit_price = tp2
+                            exit_bar_offset = bar_idx
+                            break
+                        # Check TP1
+                        if bar_high >= tp1:
+                            outcome = 'HIT_TP1'
+                            exit_price = tp1
+                            exit_bar_offset = bar_idx
+                            break
+                    else:  # SHORT
+                        best_price = min(best_price, bar_low)
+                        profit_r = (entry_price - best_price) / risk if risk > 0 else 0
+
+                        if profit_r >= 1.0:
+                            trailing_sl = min(trailing_sl, entry_price)
+                        if profit_r >= 2.0:
+                            trailing_sl = min(trailing_sl, entry_price - 1.0 * risk)
+                        if profit_r >= 3.0:
+                            trailing_sl = min(trailing_sl, entry_price - 2.0 * risk)
+
+                        if bar_high >= trailing_sl:
+                            outcome = 'HIT_SL'
+                            exit_price = trailing_sl
+                            exit_bar_offset = bar_idx
+                            break
+                        if bar_low <= tp2:
+                            outcome = 'HIT_TP2'
+                            exit_price = tp2
+                            exit_bar_offset = bar_idx
+                            break
+                        if bar_low <= tp1:
+                            outcome = 'HIT_TP1'
+                            exit_price = tp1
+                            exit_bar_offset = bar_idx
+                            break
+
+                if outcome is None:
+                    # No level hit with trailing — expire at end of data
+                    exit_price = float(closes[fwd_start + len(fwd_times) - 1])
+                    exit_time = pd.Timestamp(fwd_times[-1]).to_pydatetime()
+                    outcome = 'EXPIRED'
+                else:
+                    exit_price = float(exit_price)
+                    exit_time = pd.Timestamp(fwd_times[exit_bar_offset]).to_pydatetime()
             else:
-                # Sort by bar index; on tie, SL wins (conservative)
-                priority = {'HIT_SL': 0, 'HIT_TP1': 1, 'HIT_TP2': 2}
-                candidates.sort(key=lambda x: (x[1], priority.get(x[0], 99)))
-                outcome, exit_bar_offset, exit_price = candidates[0]
-                exit_price = float(exit_price)
-                exit_time = pd.Timestamp(fwd_times[exit_bar_offset]).to_pydatetime()
+                # Original fixed SL/TP logic
+                candidates = []
+                if sl_bar >= 0:
+                    candidates.append(('HIT_SL', sl_bar, sl))
+                if tp2_bar >= 0:
+                    candidates.append(('HIT_TP2', tp2_bar, tp2))
+                if tp1_bar >= 0:
+                    candidates.append(('HIT_TP1', tp1_bar, tp1))
+
+                if not candidates:
+                    exit_idx = len(fwd_times) - 1
+                    exit_price = float(closes[fwd_start + exit_idx])
+                    exit_time = pd.Timestamp(fwd_times[exit_idx]).to_pydatetime()
+                    outcome = 'EXPIRED'
+                else:
+                    priority = {'HIT_SL': 0, 'HIT_TP1': 1, 'HIT_TP2': 2}
+                    candidates.sort(key=lambda x: (x[1], priority.get(x[0], 99)))
+                    outcome, exit_bar_offset, exit_price = candidates[0]
+                    exit_price = float(exit_price)
+                    exit_time = pd.Timestamp(fwd_times[exit_bar_offset]).to_pydatetime()
 
             # Calculate PnL
             risk_amount = initial_capital * risk_pct
@@ -458,7 +480,7 @@ class BacktestEngine:
             'worst_trade_pnl': round(float(worst_pnl), 2),
         }
 
-    # ---------- Main Entry Point ----------
+    # ── Main Entry Point ──
 
     @classmethod
     def run(
@@ -475,18 +497,13 @@ class BacktestEngine:
         """
         Execute a full backtest.
 
-        Args:
-            symbol: Trading pair (e.g. "BTCUSDT")
-            timeframe: Candle timeframe (e.g. "1h")
-            start_date: Start of backtest window
-            end_date: End of backtest window
-            strategies: List of strategy instances to run
-            strategy_names: List of strategy name strings (for DB record)
-            initial_capital: Starting capital in USD
-            risk_pct: Fraction of capital risked per trade
-
-        Returns:
-            Dict containing run_id, status, metrics, equity_curve, trades, etc.
+        Steps:
+          1. Load candles from DB
+          2. Detect S/R zones from the dataset
+          3. Run all strategies via StrategyRunner.scan_historical()
+          4. Simulate trades with next-bar-open entry + cooldown
+          5. Build equity curve and compute metrics
+          6. Persist to DB
         """
         run_id = str(uuid.uuid4())
 
@@ -519,7 +536,7 @@ class BacktestEngine:
             if len(candles) < 50:
                 raise ValueError(
                     f"Insufficient candle data: {len(candles)} candles "
-                    f"(need at least 50 for strategy warmup)"
+                    f"(need at least 50)"
                 )
 
             data = [c.to_dict() for c in candles]
@@ -527,10 +544,7 @@ class BacktestEngine:
             candle_df['open_time'] = pd.to_datetime(candle_df['open_time'])
             candle_df = candle_df.sort_values('open_time').reset_index(drop=True)
 
-            # 2. Compute indicators across full dataset (vectorized)
-            indicator_series = cls.compute_indicators_from_df(candle_df)
-
-            # 3. Detect S/R zones from the dataset
+            # 2. Detect S/R zones from the dataset (for strategies that need them)
             atr_series = compute_atr(
                 candle_df['high'], candle_df['low'], candle_df['close'], 14
             )
@@ -540,14 +554,12 @@ class BacktestEngine:
             if current_atr <= 0:
                 current_atr = current_price * 0.01
 
-            # Detect zones from the candle data directly (avoid DB query in detect_zones)
             all_zones_raw = []
             swing_zones = SREngine.detect_swing_points(candle_df, lookback=5)
             all_zones_raw.extend(swing_zones)
             round_zones = SREngine.detect_round_numbers(symbol, current_price)
             all_zones_raw.extend(round_zones)
 
-            # Calculate zone widths and merge
             for zone in all_zones_raw:
                 upper, lower = SREngine.calculate_zone_width(zone['price_level'], current_atr)
                 zone['zone_upper'] = upper
@@ -564,37 +576,19 @@ class BacktestEngine:
 
             sr_zones = merged_zones
 
-            # 4. Run strategies — split v1 (legacy scan) vs v2 (confluence generate_signals)
-            v1_strategies = [s for s in strategies if not s.required_features]
-            v2_strategies = [s for s in strategies if s.required_features]
+            # 3. Run strategies (all use v3 unified path)
+            signals = StrategyRunner.scan_historical(
+                strategies=strategies,
+                symbol=symbol,
+                timeframe=timeframe,
+                candle_df=candle_df,
+                sr_zones=sr_zones,
+            )
 
-            signals = []
-
-            if v1_strategies:
-                v1_signals = StrategyRunner.scan_historical(
-                    strategies=v1_strategies,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    candle_df=candle_df,
-                    indicator_series=indicator_series,
-                    sr_zones=sr_zones,
-                )
-                signals.extend(v1_signals)
-
-            if v2_strategies:
-                v2_signals = StrategyRunner.scan_historical_v2(
-                    strategies=v2_strategies,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    candle_df=candle_df,
-                    sr_zones=sr_zones,
-                )
-                signals.extend(v2_signals)
-
-            # Sort signals chronologically for trade simulation
+            # Sort signals chronologically
             signals.sort(key=lambda s: s.timestamp if s.timestamp else datetime.min)
 
-            # 5. Simulate trades
+            # 4. Simulate trades
             trade_results = cls.simulate_trades(
                 signals=signals,
                 candle_df=candle_df,
@@ -602,21 +596,21 @@ class BacktestEngine:
                 risk_pct=risk_pct,
             )
 
-            # 6. Build equity curve
+            # 5. Build equity curve
             equity_curve = cls.build_equity_curve(
                 trades=trade_results,
                 initial_capital=initial_capital,
                 candle_df=candle_df,
             )
 
-            # 7. Compute metrics
+            # 6. Compute metrics
             metrics = cls.compute_metrics(
                 trades=trade_results,
                 initial_capital=initial_capital,
                 equity_curve=equity_curve,
             )
 
-            # 8. Persist results
+            # 7. Persist results
             run_record.status = 'COMPLETED'
             run_record.completed_at = datetime.utcnow()
             run_record.total_trades = metrics['total_trades']
@@ -634,7 +628,6 @@ class BacktestEngine:
             run_record.worst_trade_pnl = metrics['worst_trade_pnl']
             run_record.equity_curve = json.dumps(equity_curve)
 
-            # Persist individual trades
             for t in trade_results:
                 trade_record = BacktestTrade(
                     run_id=run_id,
@@ -670,6 +663,7 @@ class BacktestEngine:
                 'trades': trade_results,
                 'trade_count': len(trade_results),
                 'candle_count': len(candle_df),
+                'signal_count': len(signals),
             }
 
         except Exception as e:
@@ -687,4 +681,5 @@ class BacktestEngine:
                 'trades': [],
                 'trade_count': 0,
                 'candle_count': 0,
+                'signal_count': 0,
             }

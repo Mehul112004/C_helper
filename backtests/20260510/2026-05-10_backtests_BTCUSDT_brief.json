@@ -1,0 +1,108 @@
+{
+  "last_git_commit_id": "5b5432fe93bc07d816f8712023c52ad4d798c156",
+  "date": "2026-05-10",
+  "config": {
+    "symbols": [
+      "BTCUSDT"
+    ],
+    "timeframes": [
+      "15m",
+      "1h",
+      "4h",
+      "1d"
+    ],
+    "lookback_days": 90,
+    "initial_capital": 10000.0,
+    "risk_per_trade": 0.01
+  },
+  "runs": [
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "strategy_name": "Trend Following",
+      "run_id": "3afe890f-2426-4978-8626-81ac36dad604",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 85,
+        "win_rate": 40.0,
+        "total_pnl": 2632.04,
+        "total_pnl_pct": 26.32,
+        "sharpe_ratio": 3.3109,
+        "sortino_ratio": 2.8336328197186596e+16,
+        "max_drawdown": 900.0,
+        "max_drawdown_pct": 7.12,
+        "avg_rr": 2.0523,
+        "profit_factor": 1.56,
+        "avg_trade_duration_mins": 2188.94,
+        "best_trade_pnl": 324.36,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Breakout & Retest",
+      "run_id": "7aab0792-c671-42ac-b3b5-73f38f9ef6dc",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 38,
+        "win_rate": 13.16,
+        "total_pnl": 312.8,
+        "total_pnl_pct": 3.13,
+        "sharpe_ratio": 1.0992,
+        "sortino_ratio": 6.0532,
+        "max_drawdown": 1400.0,
+        "max_drawdown_pct": 13.57,
+        "avg_rr": 2.0,
+        "profit_factor": 1.1645,
+        "avg_trade_duration_mins": 25926.32,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Liquidity Sweep",
+      "run_id": "ef4e6833-af53-4faa-8bfb-d7c6f6f37327",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 24,
+        "win_rate": 41.67,
+        "total_pnl": 150.58,
+        "total_pnl_pct": 1.51,
+        "sharpe_ratio": 0.7915,
+        "sortino_ratio": 5741509207912406.0,
+        "max_drawdown": 400.0,
+        "max_drawdown_pct": 3.83,
+        "avg_rr": 1.5506,
+        "profit_factor": 1.1076,
+        "avg_trade_duration_mins": 1920.0,
+        "best_trade_pnl": 172.94,
+        "worst_trade_pnl": -100.0
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "strategy_name": "Trend Following",
+      "run_id": "7ab25818-c560-411c-b321-bd89a86fd531",
+      "status": "COMPLETED",
+      "metrics": {
+        "total_trades": 25,
+        "win_rate": 24.0,
+        "total_pnl": -283.01,
+        "total_pnl_pct": -2.83,
+        "sharpe_ratio": -1.4182,
+        "sortino_ratio": 0.0,
+        "max_drawdown": 900.0,
+        "max_drawdown_pct": 9.0,
+        "avg_rr": 2.0,
+        "profit_factor": 0.8231,
+        "avg_trade_duration_mins": 8371.2,
+        "best_trade_pnl": 200.0,
+        "worst_trade_pnl": -100.0
+      }
+    }
+  ]
+}

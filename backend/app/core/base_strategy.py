@@ -1,18 +1,31 @@
 """
-Base Strategy Contract & Core Data Classes
-Defines the universal data structures for the strategy engine:
-- Candle: Immutable OHLCV bar representation
-- Indicators: Snapshot of all indicator values at a given bar
-- SetupSignal: The output of every strategy scan
-- BaseStrategy: Abstract base class all strategies must implement
+Base Strategy — Clean Framework v3.0
+
+Every strategy is a set of independent conditions (gates).
+Some gates are HARD (must pass), others are SOFT (quality contributors).
+
+Confidence = (hard_gates_passed + soft_gates_passed) / total_gates
+This makes confidence transparent, comparable across strategies, and data-driven.
+
+Market regime gating: each strategy declares which regimes it operates in.
+Strategies that fire in wrong regimes = noise signals = filtered.
+
+Feature system: each strategy declares required_features.
+pre_process() loads only what's needed + market regime + ADX.
+
+Entry/Stop/Target convention:
+  - Entry: next bar open (realistic fill)
+  - SL: beyond the most recent structural pivot + ATR buffer
+  - TP1: nearest structural level (swing high/low or S/R zone)
+  - TP2: next structural level (farther swing or S/R zone)
 """
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
-
+from typing import Optional, List, Dict
 import pandas as pd
+import numpy as np
 
 
 @dataclass(frozen=True)
@@ -27,7 +40,6 @@ class Candle:
 
     @classmethod
     def from_db_row(cls, row: dict) -> 'Candle':
-        """Create a Candle from a Candle.to_dict() result."""
         open_time = row['open_time']
         if isinstance(open_time, str):
             open_time = datetime.fromisoformat(open_time)
@@ -42,7 +54,6 @@ class Candle:
 
     @classmethod
     def from_df_row(cls, row: pd.Series) -> 'Candle':
-        """Create a Candle from a pandas DataFrame row."""
         open_time = row['open_time']
         if isinstance(open_time, str):
             open_time = datetime.fromisoformat(open_time)
@@ -58,43 +69,22 @@ class Candle:
         )
 
     @property
-    def body_size(self) -> float:
-        """Absolute size of the candle body (|close - open|)."""
-        return abs(self.close - self.open)
-
+    def body_size(self) -> float: return abs(self.close - self.open)
     @property
-    def range_size(self) -> float:
-        """Total range of the candle (high - low)."""
-        return self.high - self.low
-
+    def range_size(self) -> float: return self.high - self.low
     @property
-    def upper_wick(self) -> float:
-        """Size of the upper wick."""
-        return self.high - max(self.open, self.close)
-
+    def upper_wick(self) -> float: return self.high - max(self.open, self.close)
     @property
-    def lower_wick(self) -> float:
-        """Size of the lower wick."""
-        return min(self.open, self.close) - self.low
-
+    def lower_wick(self) -> float: return min(self.open, self.close) - self.low
     @property
-    def is_bullish(self) -> bool:
-        """True if close > open."""
-        return self.close > self.open
-
+    def is_bullish(self) -> bool: return self.close > self.open
     @property
-    def is_bearish(self) -> bool:
-        """True if close < open."""
-        return self.close < self.open
+    def is_bearish(self) -> bool: return self.close < self.open
 
 
 @dataclass
 class Indicators:
-    """
-    Snapshot of all technical indicator values at a specific candle index.
-    Includes current-bar and previous-bar values for crossover detection.
-    """
-    # Current bar indicators
+    """Legacy indicator snapshot — kept for backward compatibility."""
     ema_9: Optional[float] = None
     ema_21: Optional[float] = None
     ema_50: Optional[float] = None
@@ -104,170 +94,32 @@ class Indicators:
     macd_line: Optional[float] = None
     macd_signal: Optional[float] = None
     macd_histogram: Optional[float] = None
-    bb_upper: Optional[float] = None
-    bb_middle: Optional[float] = None
-    bb_lower: Optional[float] = None
-    bb_width: Optional[float] = None
-    kc_upper: Optional[float] = None
-    kc_lower: Optional[float] = None
     atr_14: Optional[float] = None
     volume_ma_20: Optional[float] = None
-
-    # Previous bar indicators (for crossover detection)
     prev_ema_9: Optional[float] = None
     prev_ema_21: Optional[float] = None
-    prev_macd_line: Optional[float] = None
-    prev_macd_signal: Optional[float] = None
-    prev_macd_histogram: Optional[float] = None
-    prev_rsi_14: Optional[float] = None
-    prev_bb_upper: Optional[float] = None
-    prev_bb_lower: Optional[float] = None
-    prev_bb_width: Optional[float] = None
-    prev_kc_upper: Optional[float] = None
-    prev_kc_lower: Optional[float] = None
-
-    # Bollinger Band width history (last 20 values) for squeeze detection
-    bb_width_history: list = field(default_factory=list)
-    # RSI history (last 5 values) for momentum hook detection
-    rsi_14_history: list = field(default_factory=list)
-    # EMA 21 history (last 5 values) for slope detection
-    ema_21_history: list = field(default_factory=list)
-    # MACD histogram history (last 5 values) for momentum direction
-    macd_hist_history: list = field(default_factory=list)
-
-    @classmethod
-    def from_series(cls, series_dict: dict, idx: int) -> 'Indicators':
-        """
-        Build an Indicators snapshot from full indicator series at position idx.
-
-        Args:
-            series_dict: Dict of indicator name → list of {time, value} dicts
-                         (from IndicatorService.compute_all() with include_series=True)
-            idx: The candle index to extract values for
-
-        Returns:
-            Indicators instance with current and previous bar values populated
-        """
-        def _safe_get(series_list: list, position: int) -> Optional[float]:
-            """Safely extract a value from a series list at a given position."""
-            if not series_list or position < 0 or position >= len(series_list):
-                return None
-            val = series_list[position].get('value') if isinstance(series_list[position], dict) else series_list[position]
-            if val is None or (isinstance(val, float) and pd.isna(val)):
-                return None
-            return float(val)
-
-        # Extract Bollinger width history (last 20 values up to and including idx)
-        bb_width_series = series_dict.get('bb_width', [])
-        bb_history_start = max(0, idx - 19)
-        bb_width_history = []
-        for i in range(bb_history_start, min(idx + 1, len(bb_width_series))):
-            val = _safe_get(bb_width_series, i)
-            if val is not None:
-                bb_width_history.append(val)
-
-        # Extract RSI history (last 5 values up to and including idx)
-        rsi_series = series_dict.get('rsi_14', [])
-        rsi_history_start = max(0, idx - 4)
-        rsi_14_history = []
-        for i in range(rsi_history_start, min(idx + 1, len(rsi_series))):
-            val = _safe_get(rsi_series, i)
-            if val is not None:
-                rsi_14_history.append(val)
-
-        # Extract EMA 21 history (last 5 values up to and including idx)
-        ema_21_series = series_dict.get('ema_21', [])
-        ema_21_history_start = max(0, idx - 4)
-        ema_21_history = []
-        for i in range(ema_21_history_start, min(idx + 1, len(ema_21_series))):
-            val = _safe_get(ema_21_series, i)
-            if val is not None:
-                ema_21_history.append(val)
-
-        # Extract MACD histogram history (last 5 values up to and including idx)
-        macd_hist_series = series_dict.get('macd_histogram', [])
-        macd_hist_start = max(0, idx - 4)
-        macd_hist_history = []
-        for i in range(macd_hist_start, min(idx + 1, len(macd_hist_series))):
-            val = _safe_get(macd_hist_series, i)
-            if val is not None:
-                macd_hist_history.append(val)
-
-        return cls(
-            # Current bar
-            ema_9=_safe_get(series_dict.get('ema_9', []), idx),
-            ema_21=_safe_get(series_dict.get('ema_21', []), idx),
-            ema_50=_safe_get(series_dict.get('ema_50', []), idx),
-            ema_100=_safe_get(series_dict.get('ema_100', []), idx),
-            ema_200=_safe_get(series_dict.get('ema_200', []), idx),
-            rsi_14=_safe_get(series_dict.get('rsi_14', []), idx),
-            macd_line=_safe_get(series_dict.get('macd_line', []), idx),
-            macd_signal=_safe_get(series_dict.get('macd_signal', []), idx),
-            macd_histogram=_safe_get(series_dict.get('macd_histogram', []), idx),
-            bb_upper=_safe_get(series_dict.get('bb_upper', []), idx),
-            bb_middle=_safe_get(series_dict.get('bb_middle', []), idx),
-            bb_lower=_safe_get(series_dict.get('bb_lower', []), idx),
-            bb_width=_safe_get(series_dict.get('bb_width', []), idx),
-            kc_upper=_safe_get(series_dict.get('kc_upper', []), idx),
-            kc_lower=_safe_get(series_dict.get('kc_lower', []), idx),
-            atr_14=_safe_get(series_dict.get('atr_14', []), idx),
-            volume_ma_20=_safe_get(series_dict.get('volume_ma_20', []), idx),
-
-            # Previous bar
-            prev_ema_9=_safe_get(series_dict.get('ema_9', []), idx - 1),
-            prev_ema_21=_safe_get(series_dict.get('ema_21', []), idx - 1),
-            prev_macd_line=_safe_get(series_dict.get('macd_line', []), idx - 1),
-            prev_macd_signal=_safe_get(series_dict.get('macd_signal', []), idx - 1),
-            prev_macd_histogram=_safe_get(series_dict.get('macd_histogram', []), idx - 1),
-            prev_rsi_14=_safe_get(series_dict.get('rsi_14', []), idx - 1),
-            prev_bb_upper=_safe_get(series_dict.get('bb_upper', []), idx - 1),
-            prev_bb_lower=_safe_get(series_dict.get('bb_lower', []), idx - 1),
-            prev_bb_width=_safe_get(series_dict.get('bb_width', []), idx - 1),
-            prev_kc_upper=_safe_get(series_dict.get('kc_upper', []), idx - 1),
-            prev_kc_lower=_safe_get(series_dict.get('kc_lower', []), idx - 1),
-
-            # Bollinger width history
-            bb_width_history=bb_width_history,
-            
-            # RSI history
-            rsi_14_history=rsi_14_history,
-
-            # EMA 21 history
-            ema_21_history=ema_21_history,
-
-            # MACD histogram history
-            macd_hist_history=macd_hist_history,
-        )
 
 
 @dataclass
 class SetupSignal:
-    """
-    Universal output of every strategy's scan() method.
-    This object flows through the entire signal pipeline:
-    strategy → watching card → LLM confirmation → Telegram.
-    """
-    strategy_name: str          # e.g. "EMA Crossover"
-    symbol: str                 # e.g. "BTCUSDT"
-    timeframe: str              # e.g. "4h"
-    direction: str              # "LONG" or "SHORT"
-    confidence: float           # 0.0 to 1.0
-    entry: Optional[float] = None       # platform calculates if None
-    sl: Optional[float] = None          # stop-loss
-    tp1: Optional[float] = None         # take-profit 1
-    tp2: Optional[float] = None         # take-profit 2
-    notes: str = ""                     # context for LLM
+    """A single trading signal from any strategy."""
+    strategy_name: str
+    symbol: str
+    timeframe: str
+    direction: str          # 'LONG' or 'SHORT'
+    confidence: float       # 0.0 to 1.0 — fraction of gates passed
+    entry: Optional[float] = None
+    sl: Optional[float] = None
+    tp1: Optional[float] = None
+    tp2: Optional[float] = None
+    notes: str = ""
     timestamp: datetime = field(default_factory=datetime.utcnow)
-    context_data: Optional[dict] = None  # Phase 3: serialized snapshot of zones/indicators/events
-
-    def __post_init__(self):
-        if self.direction not in ("LONG", "SHORT"):
-            raise ValueError(f"direction must be 'LONG' or 'SHORT', got '{self.direction}'")
-        if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError(f"confidence must be between 0.0 and 1.0, got {self.confidence}")
+    gates_passed: List[str] = field(default_factory=list)
+    gates_failed: List[str] = field(default_factory=list)
+    htf_context: Optional[dict] = None
+    regime: str = "UNKNOWN"
 
     def to_dict(self) -> dict:
-        """Serialize to a JSON-safe dictionary."""
         return {
             'strategy_name': self.strategy_name,
             'symbol': self.symbol,
@@ -280,96 +132,99 @@ class SetupSignal:
             'tp2': self.tp2,
             'notes': self.notes,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'gates_passed': self.gates_passed,
+            'gates_failed': self.gates_failed,
+            'regime': self.regime,
         }
 
 
 class BaseStrategy(ABC):
     """
-    Abstract base class for all trading strategies.
+    Abstract base for all strategies.
 
-    Phase 2: Feature-aware orchestrator with weighted scoring matrix.
-
-    Subclasses must implement:
-      - scan() (legacy, being phased out) OR
-      - generate_signals() (Phase 2, DataFrame-based scoring)
-
-    Class attributes:
-        name: Human-readable strategy name
-        description: What this strategy looks for
-        timeframes: List of timeframes this strategy operates on
-        version: Strategy version string
-        min_confidence: Minimum confidence threshold for signals (default 0.5)
-        required_features: List of feature names this strategy consumes
-        feature_config: Dict of feature-specific configuration
+    Subclass contract:
+      - Set class-level: name, timeframes, required_features, allowed_regimes
+      - Override: generate_signals(df) → returns df with 'signal', 'direction', 'confidence'
+      - Override: calculate_sl(signal, df, atr) for custom stop placement
+      - Override: calculate_tp(signal, df, atr) for custom target placement
     """
 
-    name: str = "Unnamed Strategy"
-    description: str = ""
-    timeframes: list = []  # Subclasses MUST override with their own list literal
-    version: str = "1.0"
-    min_confidence: float = 0.5     # Configurable per strategy; session/runner can override
+    name: str = "Unnamed"
+    version: str = "3.0"
+    timeframes: List[str] = []
 
-    # ── Phase 2: Feature Declaration ──
-    required_features: list[str] = []
-    # Valid values: 'rsi', 'ema', 'macd', 'bb', 'bb_width_history', 'atr',
-    #               'volume_ma', 'fvg', 'ob', 'sr', 'choch', 'bos',
-    #               'volume_climax', 'liquidity_sweep'
-    feature_config: dict = {}
-    # e.g., {'rsi_period': 14, 'ema_periods': [9, 21, 50, 200], 'fvg_mitigation': 'wick'}
+    # ── Market context gating ──
+    # Which regimes this strategy is designed for (empty = all regimes)
+    allowed_regimes: List[str] = []  # e.g. ['TRENDING_UP', 'TRENDING_DOWN']
+    require_htf_alignment: bool = True
 
-    # ── Phase 2: Orchestration ──
+    # ── Confidence threshold ──
+    min_confidence: float = 0.5  # Must pass at least 50% of total gates
+
+    # ── Feature declaration ──
+    required_features: List[str] = []
+    # Valid: 'ema', 'rsi', 'macd', 'bb', 'atr', 'adx', 'volume_ma',
+    #        'fvg', 'ob', 'sr', 'choch', 'bos', 'volume_climax', 'liquidity_sweep'
+
+    # ── Risk parameters ──
+    sl_atr_mult: float = 1.0      # SL = pivot ± sl_atr_mult * ATR
+    tp1_rr: float = 1.5           # Minimum RR for TP1 (overridden by structural TP)
+    tp2_rr: float = 3.0           # Minimum RR for TP2
+
+    # ═══════════════════════════════════════════════════════════════
+    #  Orchestration (called by StrategyRunner)
+    # ═══════════════════════════════════════════════════════════════
 
     @classmethod
     def get_required_lookback(cls) -> int:
-        """Returns minimum candles needed based on declared features."""
+        """Minimum candles needed for this strategy's features."""
         if any(f in cls.required_features for f in ['ob', 'fvg', 'sr']):
-            return 1000
+            return 500
         if 'ema' in cls.required_features:
-            periods = cls.feature_config.get('ema_periods', [])
-            if periods and max(periods) >= 200:
-                return 300
-        return 150
+            return 300
+        return 200
 
     @classmethod
     def get_min_candles(cls) -> int:
-        """Returns absolute minimum candles before any signal can fire."""
-        if any(f in cls.required_features for f in ['ob', 'fvg']):
-            return 50
-        if 'ema' in cls.required_features:
-            periods = cls.feature_config.get('ema_periods', [9])
-            return max(periods) + 20
-        return 30
+        """Absolute minimum candles before any signal can fire."""
+        return 50
 
     @classmethod
     def pre_process(cls, df: pd.DataFrame, symbol: str, timeframe: str) -> pd.DataFrame:
         """
-        Dynamically loads only the features this specific strategy requires.
-
-        Called ONCE per strategy per candle close. The resulting DataFrame
-        is passed to generate_signals().
+        Dynamically load only the features this strategy requires.
+        Always adds: adx (for regime), ema_50/100/200 (for HTF), atr (for SL)
         """
-        config = cls.feature_config
+        df = df.copy()
 
-        # ── Continuous State ──
-        if 'rsi' in cls.required_features:
-            from app.core.indicators import compute_rsi
-            df = df.copy() if 'rsi' not in df.columns else df
-            df['rsi'] = compute_rsi(df['close'], period=config.get('rsi_period', 14))
+        # ── Core indicators (always loaded for regime + HTF) ──
+        from app.core.indicators import compute_ema, compute_atr, compute_adx
+        for p in [50, 100, 200]:
+            col = f'ema_{p}'
+            if col not in df.columns:
+                df[col] = compute_ema(df['close'], period=p)
+        if 'adx' not in df.columns:
+            df['adx'] = compute_adx(df['high'], df['low'], df['close'])
+        if 'atr' not in df.columns:
+            df['atr'] = compute_atr(df['high'], df['low'], df['close'])
 
+        # ── Strategy-requested features ──
         if 'ema' in cls.required_features:
             from app.core.indicators import compute_ema
-            periods = config.get('ema_periods', [9, 21, 50, 200])
-            for p in periods:
+            for p in [9, 21]:
                 col = f'ema_{p}'
                 if col not in df.columns:
-                    df = df.copy() if col not in df.columns else df
                     df[col] = compute_ema(df['close'], period=p)
+
+        if 'rsi' in cls.required_features:
+            from app.core.indicators import compute_rsi
+            if 'rsi' not in df.columns:
+                df['rsi'] = compute_rsi(df['close'])
 
         if 'macd' in cls.required_features:
             from app.core.indicators import compute_macd
             if 'macd_line' not in df.columns:
                 macd = compute_macd(df['close'])
-                df = df.copy()
                 df['macd_line'] = macd['macd_line']
                 df['macd_signal'] = macd['macd_signal']
                 df['macd_histogram'] = macd['macd_histogram']
@@ -378,228 +233,162 @@ class BaseStrategy(ABC):
             from app.core.indicators import compute_bollinger
             if 'bb_upper' not in df.columns:
                 bb = compute_bollinger(df['close'])
-                df = df.copy()
                 df['bb_upper'] = bb['bb_upper']
                 df['bb_middle'] = bb['bb_middle']
                 df['bb_lower'] = bb['bb_lower']
                 df['bb_width'] = bb['bb_width']
 
-        if 'bb_width_history' in cls.required_features:
-            if 'bb_width' not in df.columns:
-                from app.core.indicators import compute_bollinger
-                bb = compute_bollinger(df['close'])
-                df = df.copy()
-                df['bb_width'] = bb['bb_width']
-            if 'bb_width_avg_20' not in df.columns:
-                df['bb_width_avg_20'] = df['bb_width'].rolling(20).mean()
-
-        if 'atr' in cls.required_features:
-            from app.core.indicators import compute_atr
-            if 'atr' not in df.columns:
-                df = df.copy()
-                df['atr'] = compute_atr(df['high'], df['low'], df['close'],
-                                         period=config.get('atr_period', 14))
-
         if 'volume_ma' in cls.required_features:
             from app.core.indicators import compute_volume_ma
             if 'volume_ma' not in df.columns:
-                df = df.copy()
-                df['volume_ma'] = compute_volume_ma(df['volume'],
-                                                     period=config.get('volume_ma_period', 20))
+                df['volume_ma'] = compute_volume_ma(df['volume'])
 
-        # ── Spatial State (Zones) ──
+        # ── Spatial state ──
         if 'fvg' in cls.required_features:
             from app.core.market_structure import extract_fvgs
-            df = extract_fvgs(df, mitigation_type=config.get('fvg_mitigation', 'wick'))
+            fvg_cols = ['fvg_active', 'fvg_upper', 'fvg_lower']
+            if not all(c in df.columns for c in fvg_cols):
+                df = extract_fvgs(df)
 
         if 'ob' in cls.required_features:
             from app.core.market_structure import extract_order_blocks
-            df = extract_order_blocks(df)
+            ob_cols = ['ob_active', 'ob_upper', 'ob_lower', 'ob_direction']
+            if not all(c in df.columns for c in ob_cols):
+                df = extract_order_blocks(df)
 
         if 'sr' in cls.required_features:
             from app.core.sr_engine import SREngine
-            df = SREngine.detect_zones_df(df, symbol=symbol, timeframe=timeframe)
+            if 'sr_active' not in df.columns:
+                df = SREngine.detect_zones_df(df, symbol=symbol, timeframe=timeframe)
 
-        # ── Temporal State (Events) ──
+        # ── Temporal state ──
         if 'choch' in cls.required_features or 'bos' in cls.required_features:
             from app.core.events import detect_choch
-            events_df = detect_choch(df)
-            for col in events_df.columns:
-                if col not in df.columns:
-                    df[col] = events_df[col]
+            if 'event_choch_bullish' not in df.columns:
+                events_df = detect_choch(df)
+                for col in events_df.columns:
+                    if col not in df.columns:
+                        df[col] = events_df[col]
 
         if 'volume_climax' in cls.required_features:
             from app.core.events import detect_volume_climax
-            climax_df = detect_volume_climax(df)
-            for col in climax_df.columns:
-                if col not in df.columns:
-                    df[col] = climax_df[col]
+            if 'event_volume_climax' not in df.columns:
+                climax_df = detect_volume_climax(df)
+                for col in climax_df.columns:
+                    if col not in df.columns:
+                        df[col] = climax_df[col]
 
         if 'liquidity_sweep' in cls.required_features:
             from app.core.events import detect_liquidity_sweep
-            sweep_df = detect_liquidity_sweep(df)
-            for col in sweep_df.columns:
-                if col not in df.columns:
-                    df[col] = sweep_df[col]
+            if 'event_sweep_bullish' not in df.columns:
+                sweep_df = detect_liquidity_sweep(df)
+                for col in sweep_df.columns:
+                    if col not in df.columns:
+                        df[col] = sweep_df[col]
+
+        # ── Market regime detection ──
+        from app.core.market_regime import detect_market_regime
+        df = detect_market_regime(df)
 
         return df
 
+    # ═══════════════════════════════════════════════════════════════
+    #  Signal generation (override this)
+    # ═══════════════════════════════════════════════════════════════
+
+    @abstractmethod
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Phase 2: Pure logic. Receives a pre-processed DataFrame.
+        Override to define strategy logic.
 
-        Override this to implement weighted scoring.
-        Must return DataFrame with at minimum:
-            df['signal']      — 1 or 0
-            df['direction']   — 'LONG', 'SHORT', or None
-            df['confidence']  — 0.0 to 1.0
-        Should also return confidence breakdown columns: df['conf_base'],
-        df['conf_fvg'], etc. for Phase 3 context_data serialization.
+        Must add columns: 'signal' (0/1), 'direction' ('LONG'/'SHORT'/None),
+                          'confidence' (0-1)
+
+        Should use the self.evaluate_gates() pattern for transparent scoring.
         """
         df['signal'] = 0
         df['direction'] = None
         df['confidence'] = 0.0
         return df
 
-    # ── Legacy interface (existing strategies) ──
+    # ═══════════════════════════════════════════════════════════════
+    #  Gate evaluation helpers (use in generate_signals)
+    # ═══════════════════════════════════════════════════════════════
 
-    def scan(
-        self,
-        symbol: str,
-        timeframe: str,
-        candles: list[Candle],
-        indicators: Indicators,
-        sr_zones: list[dict],
-        htf_candles: list[Candle] = None,
-    ) -> Optional[SetupSignal]:
+    @staticmethod
+    def evaluate_gate(condition: pd.Series, name: str, weight: float = 1.0) -> pd.Series:
         """
-        Legacy entry point. Existing strategies override this directly.
-        Phase 2 strategies should override generate_signals() instead
-        and can leave this unimplemented.
+        Evaluate a single gate condition.
+        Returns a Series of 0 or weight (for confidence accumulation).
         """
-        raise NotImplementedError(
-            f"{self.name}: scan() not implemented. "
-            f"Either override scan() or implement generate_signals() for Phase 2."
-        )
+        result = pd.Series(0.0, index=condition.index)
+        result[condition] = weight
+        return result
 
-    def calculate_sl(self, signal: SetupSignal, candles: list[Candle], atr: float) -> float:
+    @staticmethod
+    def hard_gate(condition: pd.Series, name: str) -> pd.Series:
+        """Hard gate: must be True for signal to fire."""
+        return condition.astype(bool)
+
+    @staticmethod
+    def soft_gate(condition: pd.Series, name: str, weight: float = 1.0) -> pd.Series:
+        """Soft gate: adds to confidence if True."""
+        result = pd.Series(0.0, index=condition.index)
+        result[condition.astype(bool)] = weight
+        return result
+
+    # ═══════════════════════════════════════════════════════════════
+    #  Risk calculators (can override)
+    # ═══════════════════════════════════════════════════════════════
+
+    def calculate_sl(self, signal: SetupSignal, df: pd.DataFrame,
+                     signal_idx: int, atr: float) -> float:
         """
-        Override to customize stop-loss calculation.
-        Default: Structural SL behind the recent 3-candle pivot + 0.5 ATR buffer.
+        Default: Structural SL beyond the recent 5-bar pivot + ATR buffer.
         """
-        if signal.direction == "LONG":
-            recent_low = min(c.low for c in candles[-3:])
-            return round(recent_low - (0.5 * atr), 8)
+        if signal_idx < 5:
+            return None
+        window = df.iloc[max(0, signal_idx - 20):signal_idx + 1]
+        if signal.direction == 'LONG':
+            pivot = window['low'].rolling(5).min().iloc[-1]
+            return round(pivot - (self.sl_atr_mult * atr), 8)
         else:
-            recent_high = max(c.high for c in candles[-3:])
-            return round(recent_high + (0.5 * atr), 8)
+            pivot = window['high'].rolling(5).max().iloc[-1]
+            return round(pivot + (self.sl_atr_mult * atr), 8)
 
-    def calculate_tp(self, signal: SetupSignal, candles: list[Candle], atr: float, sr_zones: list[dict] = None) -> tuple:
+    def calculate_tp(self, signal: SetupSignal, df: pd.DataFrame,
+                     signal_idx: int, atr: float) -> tuple:
         """
-        Override to customize take-profit calculation.
-        Default: Risk-based TP at 1.5R and 3.0R, compressed to nearest zone.
-
-        If a reliable S/R zone sits between entry and the 1.5R target,
-        TP1 is set to the zone boundary (front-running the reversal point).
-        This captures profits before price hits structural resistance/support.
+        Default: Risk-based TP at 1.5R and 3.0R.
+        Override for structural targets.
         """
-        entry = signal.entry if signal.entry is not None else candles[-1].close
-        sl = signal.sl if signal.sl is not None else self.calculate_sl(signal, candles, atr)
-        risk = abs(entry - sl)
-        risk = max(risk, atr * 0.2)  # Fallback floor
-
-        if signal.direction == "LONG":
-            tp1 = round(entry + (1.5 * risk), 8)
-            tp2 = round(entry + (3.0 * risk), 8)
-
-            # ── Adaptive: cap TP1 at nearest resistance zone ──
-            if sr_zones:
-                resistances = [
-                    z for z in sr_zones
-                    if z.get('zone_type') in ('resistance', 'both')
-                    and z.get('strength_score', 0) >= 0.3
-                    and z.get('zone_lower', 0) > entry
-                    and z.get('zone_lower', 0) < tp2
-                ]
-                if resistances:
-                    nearest = min(resistances, key=lambda z: z['zone_lower'])
-                    zone_tp = nearest['zone_lower']  # TP at lower edge of resistance
-                    # Only use if better than 1R (risk-reward floor)
-                    if zone_tp > entry + risk:
-                        tp1 = round(zone_tp, 8)
+        if signal.entry is None:
+            return (None, None)
+        sl = signal.sl
+        if sl is None:
+            return (None, None)
+        risk = abs(signal.entry - sl)
+        if risk <= 0:
+            risk = atr * 0.2
+        if signal.direction == 'LONG':
+            return (round(signal.entry + self.tp1_rr * risk, 8),
+                    round(signal.entry + self.tp2_rr * risk, 8))
         else:
-            tp1 = round(entry - (1.5 * risk), 8)
-            tp2 = round(entry - (3.0 * risk), 8)
-
-            if sr_zones:
-                supports = [
-                    z for z in sr_zones
-                    if z.get('zone_type') in ('support', 'both')
-                    and z.get('strength_score', 0) >= 0.3
-                    and z.get('zone_upper', 0) < entry
-                    and z.get('zone_upper', 0) > tp2
-                ]
-                if supports:
-                    nearest = max(supports, key=lambda z: z['zone_upper'])
-                    zone_tp = nearest['zone_upper']
-                    if zone_tp < entry - risk:
-                        tp1 = round(zone_tp, 8)
-
-        return (tp1, tp2)
+            return (round(signal.entry - self.tp1_rr * risk, 8),
+                    round(signal.entry - self.tp2_rr * risk, 8))
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
-        """Override to skip LLM confirmation for this strategy. Default: True."""
-        return True
-
-    def htf_trend_filter(self, df: pd.DataFrame, signal_row: pd.Series,
-                         direction: str, htf_name: str = '4h') -> bool:
-        """
-        Post-signal HTF trend gate. Returns True if signal aligns with HTF trend.
-
-        Default: LONG requires HTF close > HTF EMA50, SHORT requires close < EMA50.
-        Override for strategy-specific HTF logic.
-
-        Strategies that want this MUST declare 'ema' in required_features with
-        a period matching the higher timeframe window (~50).
-        """
-        ema_col = f'ema_50'
-        # Use the signal row's position in df, not the last row
-        try:
-            row_idx = signal_row.name  # DataFrame index label of the signal row
-        except (AttributeError, KeyError):
-            return True  # Can't locate row → don't block
-        if ema_col not in df.columns or pd.isna(df.at[row_idx, ema_col]):
-            return True  # No HTF data → don't block
-
-        htf_close = signal_row.get('close', df.at[row_idx, 'close'])
-        htf_ema50 = df.at[row_idx, ema_col]
-
-        if pd.isna(htf_ema50):
-            return True
-
-        if direction == 'LONG':
-            return htf_close > htf_ema50
-        else:
-            return htf_close < htf_ema50
+        """Whether to send this signal to the LLM for confirmation."""
+        return False  # Default: no LLM, signals fire directly
 
 
-# ── Phase 4: NaN Guard Utilities ──
+# ── Utility: safe boolean comparisons (NaN → False) ──
 
 def safe_lt(series: pd.Series, threshold: float) -> pd.Series:
-    """Less-than comparison treating NaN as False (no silent signal weakening)."""
     return series.notna() & (series < threshold)
 
-
 def safe_gt(series: pd.Series, threshold: float) -> pd.Series:
-    """Greater-than comparison treating NaN as False."""
     return series.notna() & (series > threshold)
 
-
 def safe_between(series: pd.Series, lower: float, upper: float) -> pd.Series:
-    """Between check treating NaN as False."""
     return series.notna() & (series >= lower) & (series <= upper)
-
-
-def safe_notna(series: pd.Series) -> pd.Series:
-    """Convenience: not-NaN check that returns a boolean Series."""
-    return series.notna()

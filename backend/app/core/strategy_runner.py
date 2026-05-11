@@ -1,228 +1,51 @@
 """
-Strategy Runner
-Orchestrates running strategies against candle data and collecting SetupSignal results.
-Used by both the live scanner (Phase 4) and the backtester (Phase 7).
+Strategy Runner v3.0
+
+Orchestrates running strategies against candle data and collecting signals.
+Unified DataFrame-based execution for all strategies.
+
+Two modes:
+  - Live: run_single_scan() — checks the latest candle for signals
+  - Backtest: scan_historical() — walks through all bars collecting signals
 """
 
 import pandas as pd
-from typing import Optional
+from typing import Optional, List
 
-from app.core.base_strategy import BaseStrategy, Candle, Indicators, SetupSignal
-from app.core.data_utils import get_finalized_candles
-from app.core.context_serializer import serialize_context
+from app.core.base_strategy import BaseStrategy, SetupSignal
 
 
 class StrategyRunner:
-    """
-    Runs strategies against candle datasets and collects SetupSignal results.
-    Handles exception safety, signal validation, and default SL/TP population.
-
-    Two execution paths:
-      - Legacy: run_single_scan() / scan_historical() — Candle-object based
-      - Phase 2: run_single_scan_v2() / scan_historical_v2() — DataFrame based
-    """
-
-    # ── Legacy: Candle-object based ──
-
-    @staticmethod
-    def prepare_indicators_snapshot(
-        series_dict: dict,
-        idx: int,
-    ) -> Indicators:
-        """
-        Build an Indicators dataclass from full indicator series at a specific candle index.
-
-        Args:
-            series_dict: Dict of indicator name → list of values (from IndicatorService
-                         compute_all with include_series=True). Each entry is a list of
-                         {time, value} dicts.
-            idx: The candle index to extract values for.
-
-        Returns:
-            Indicators instance with current + previous bar values populated.
-        """
-        return Indicators.from_series(series_dict, idx)
+    """Executes strategies and collects SetupSignal results."""
 
     @staticmethod
     def run_single_scan(
         strategy: BaseStrategy,
         symbol: str,
         timeframe: str,
-        candles: list[Candle],
-        indicators: Indicators,
-        sr_zones: list[dict],
-        htf_candles: list[Candle] = None,
         min_confidence_override: Optional[float] = None,
-    ) -> Optional[SetupSignal]:
+    ) -> Optional[tuple]:
         """
-        Execute a single strategy scan with safety wrapping.
-
-        Wraps strategy.scan() with:
-        - Exception handling (bad strategies don't crash the engine)
-        - Signal validation (direction, confidence bounds)
-        - Default SL/TP population if the strategy didn't provide them
-        - Minimum confidence filtering
-
-        Args:
-            strategy: The strategy instance to run
-            symbol: Trading pair
-            timeframe: Candle timeframe
-            candles: Recent candle history (most recent last)
-            indicators: Current indicator snapshot
-            sr_zones: S/R zones near current price
-            min_confidence_override: If provided, overrides the strategy's min_confidence
-                                     (used for per-session threshold configuration)
-
-        Returns:
-            A fully populated SetupSignal or None
-        """
-        try:
-            signal = strategy.scan(symbol, timeframe, candles, indicators, sr_zones, htf_candles=htf_candles)
-
-            if signal is None:
-                return None
-
-            # Apply minimum confidence filter
-            threshold = min_confidence_override if min_confidence_override is not None else strategy.min_confidence
-            if signal.confidence < threshold:
-                return None
-
-            # Populate defaults
-            atr = indicators.atr_14 if indicators.atr_14 is not None else 0.0
-
-            if signal.entry is None:
-                signal.entry = candles[-1].close
-
-            if signal.sl is None and atr > 0:
-                signal.sl = strategy.calculate_sl(signal, candles, atr)
-
-            if (signal.tp1 is None or signal.tp2 is None) and atr > 0:
-                tp1, tp2 = strategy.calculate_tp(signal, candles, atr, sr_zones=sr_zones)
-                if signal.tp1 is None:
-                    signal.tp1 = tp1
-                if signal.tp2 is None:
-                    signal.tp2 = tp2
-
-            return signal
-
-        except Exception as e:
-            print(f"[StrategyRunner] Error in {strategy.name}: {e}")
-            return None
-
-    @classmethod
-    def scan_historical(
-        cls,
-        strategies: list[BaseStrategy],
-        symbol: str,
-        timeframe: str,
-        candle_df: pd.DataFrame,
-        indicator_series: dict,
-        sr_zones: list[dict],
-        min_confidence_override: Optional[float] = None,
-    ) -> list[SetupSignal]:
-        """
-        Walk through a historical candle dataset bar-by-bar, running all
-        applicable strategies at each bar close. Returns all signals generated.
-
-        Used for testing and backtesting.
-
-        Args:
-            strategies: List of strategy instances to run
-            symbol: Trading pair
-            timeframe: Candle timeframe
-            candle_df: DataFrame with OHLCV data sorted by open_time ascending
-            indicator_series: Full indicator series dict from IndicatorService.compute_all()
-            sr_zones: S/R zones for this symbol (applied uniformly to all bars)
-            min_confidence_override: Optional per-session confidence threshold
-
-        Returns:
-            List of all SetupSignal objects generated across the walk
-        """
-        signals = []
-
-        # Convert DataFrame rows to Candle objects
-        candle_objects = [Candle.from_df_row(row) for _, row in candle_df.iterrows()]
-
-        MIN_HISTORY_CANDLES = 50
-        start_idx = MIN_HISTORY_CANDLES
-
-        for idx in range(start_idx, len(candle_objects)):
-            # Build the candle window (last 50 candles up to and including idx)
-            window_start = max(0, idx - 49)
-            window = candle_objects[window_start: idx + 1]
-
-            # Build indicators snapshot for this bar
-            indicators = cls.prepare_indicators_snapshot(indicator_series, idx)
-
-            for strategy in strategies:
-                # Skip strategies that don't operate on this timeframe
-                if timeframe not in strategy.timeframes:
-                    continue
-
-                signal = cls.run_single_scan(
-                    strategy=strategy,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    candles=window,
-                    indicators=indicators,
-                    sr_zones=sr_zones,
-                    min_confidence_override=min_confidence_override,
-                )
-
-                if signal:
-                    # Override timestamp to the bar's time (not current wall time)
-                    signal.timestamp = candle_objects[idx].open_time
-                    signals.append(signal)
-
-        return signals
-
-    # ── Phase 2: DataFrame-based ──
-
-    @staticmethod
-    def _df_row_to_candles(df: pd.DataFrame, lookback: int = 50) -> list[Candle]:
-        """Convert the last N DataFrame rows to Candle objects for SL/TP calc."""
-        window = df.iloc[-lookback:]
-        return [Candle.from_df_row(row) for _, row in window.iterrows()]
-
-    @staticmethod
-    def _df_slice_to_candles(df: pd.DataFrame, start_idx: int, end_idx: int) -> list[Candle]:
-        """Convert a slice of DataFrame rows to Candle objects."""
-        window = df.iloc[start_idx: end_idx + 1]
-        return [Candle.from_df_row(row) for _, row in window.iterrows()]
-
-    @staticmethod
-    def run_single_scan_v2(
-        strategy: BaseStrategy,
-        symbol: str,
-        timeframe: str,
-        min_confidence_override: Optional[float] = None,
-    ):
-        """
-        Phase 2 execution path (live mode).
-        Uses DataFrame-based pipeline with feature extraction.
+        Live mode: Execute strategy on the latest candle data.
+        Fetches candles from DB, pre-processes, runs generate_signals(),
+        extracts the last bar's signal.
 
         Returns:
             Tuple of (SetupSignal, pre_processed_df) or (None, None).
-            The DataFrame is returned so the caller can serialize context_data
-            from the exact row where the signal fired.
+            The DataFrame is returned for context serialization.
         """
-        from app.core.base_strategy import SetupSignal
+        from app.core.data_utils import get_finalized_candles
 
         try:
-            # 1. Fetch data
             lookback = strategy.get_required_lookback()
             df = get_finalized_candles(symbol, timeframe, limit=lookback)
 
             if len(df) < strategy.get_min_candles():
                 return None, None
 
-            # 2. Pre-process (adds feature columns)
             df = strategy.pre_process(df, symbol=symbol, timeframe=timeframe)
-
-            # 3. Generate signals
             df = strategy.generate_signals(df)
 
-            # 4. Extract last row
             last = df.iloc[-1]
             if last.get('signal', 0) != 1:
                 return None, None
@@ -236,11 +59,12 @@ class StrategyRunner:
             if direction not in ('LONG', 'SHORT'):
                 return None, None
 
+            # Entry at next bar's open (realistic) — for live, use current close
+            # (the signal just fired, user can enter at market)
             entry = float(last['close'])
             atr_val = float(last['atr']) if 'atr' in df.columns and pd.notna(last.get('atr')) else 0.0
 
-            # Convert last N rows to Candle objects for SL/TP calculators
-            candles = StrategyRunner._df_row_to_candles(df, lookback=min(50, len(df)))
+            signal_idx = len(df) - 1
 
             signal = SetupSignal(
                 strategy_name=strategy.name,
@@ -249,41 +73,51 @@ class StrategyRunner:
                 direction=direction,
                 confidence=round(float(confidence), 4),
                 entry=entry,
+                regime=str(last.get('regime', 'UNKNOWN')),
             )
 
-            if atr_val > 0:
-                signal.sl = strategy.calculate_sl(signal, candles, atr_val)
-                tp1, tp2 = strategy.calculate_tp(signal, candles, atr_val)
+            if atr_val > 0 and signal_idx >= 5:
+                signal.sl = strategy.calculate_sl(signal, df, signal_idx, atr_val)
+                tp1, tp2 = strategy.calculate_tp(signal, df, signal_idx, atr_val)
                 signal.tp1 = tp1
                 signal.tp2 = tp2
+
+            # Build notes from gates
+            gates_passed = []
+            gates_failed = []
+            signal.gates_passed = gates_passed
+            signal.gates_failed = gates_failed
+            signal.notes = (
+                f"{signal.direction} signal. "
+                f"Confidence: {confidence:.0%}. "
+                f"Regime: {signal.regime}."
+            )
 
             return signal, df
 
         except Exception as e:
-            print(f"[StrategyRunner v2] Error in {strategy.name}: {e}")
+            print(f"[StrategyRunner] Error in {strategy.name}: {e}")
+            import traceback
+            traceback.print_exc()
             return None, None
 
     @classmethod
-    def scan_historical_v2(
+    def scan_historical(
         cls,
-        strategies: list[BaseStrategy],
+        strategies: List[BaseStrategy],
         symbol: str,
         timeframe: str,
         candle_df: pd.DataFrame,
-        sr_zones: list[dict] = None,
+        sr_zones: list = None,
         min_confidence_override: Optional[float] = None,
-    ) -> list[SetupSignal]:
+    ) -> List[SetupSignal]:
         """
-        Phase 2 backtester path.
-
-        Pre-processes the full DataFrame once per strategy, generates signals
-        across all rows, then extracts SetupSignal objects for every row
+        Backtest mode: Walk through the full candle dataset, running each
+        strategy once. Pre-processes the DataFrame, runs generate_signals()
+        across ALL rows, and extracts SetupSignal objects for every row
         where signal == 1.
 
-        sr_zones: pre-computed S/R zones from the backtester's detection
-                  pipeline. Injected as sr_* columns so strategies requesting
-                  the 'sr' feature use historically-accurate zones, not
-                  DB-dependent real-time ones.
+        All strategies use the new v3 framework (generate_signals + gate-based).
         """
         signals = []
 
@@ -295,8 +129,7 @@ class StrategyRunner:
                 df = candle_df.copy()
                 df = strategy.pre_process(df, symbol=symbol, timeframe=timeframe)
 
-                # Inject backtest-computed SR zones after pre_process so
-                # historically-accurate zones override detect_zones_df output.
+                # Inject backtest-computed S/R zones if strategy uses them
                 if sr_zones and 'sr' in strategy.required_features:
                     _inject_sr_zones(df, sr_zones)
 
@@ -315,13 +148,17 @@ class StrategyRunner:
                     if direction not in ('LONG', 'SHORT'):
                         continue
 
+                    # Find integer position of this row in the DataFrame
+                    pos_idx = df.index.get_loc(idx)
+
+                    # Entry at next bar's open (handled by BacktestEngine now)
+                    # Here we set the signal's entry to the signal bar's close
+                    # and BacktestEngine adjusts it to next bar's open
                     entry = float(row['close'])
                     atr_val = float(row['atr']) if 'atr' in df.columns and pd.notna(row.get('atr')) else 0.0
 
-                    # Convert label index to integer position
-                    pos_idx = df.index.get_loc(idx)
-                    window_start = max(0, pos_idx - 49)
-                    candles = cls._df_slice_to_candles(df, window_start, pos_idx)
+                    regime = str(row.get('regime', 'UNKNOWN'))
+                    signal_time = df.iloc[pos_idx]['open_time']
 
                     signal = SetupSignal(
                         strategy_name=strategy.name,
@@ -330,65 +167,53 @@ class StrategyRunner:
                         direction=direction,
                         confidence=round(float(confidence), 4),
                         entry=entry,
-                        timestamp=df.iloc[pos_idx]['open_time'],
+                        timestamp=signal_time,
+                        regime=regime,
                     )
 
-                    if atr_val > 0:
-                        signal.sl = strategy.calculate_sl(signal, candles, atr_val)
-                        tp1, tp2 = strategy.calculate_tp(signal, candles, atr_val)
+                    if atr_val > 0 and pos_idx >= 5:
+                        signal.sl = strategy.calculate_sl(signal, df, pos_idx, atr_val)
+                        tp1, tp2 = strategy.calculate_tp(signal, df, pos_idx, atr_val)
                         signal.tp1 = tp1
                         signal.tp2 = tp2
 
+                    if signal.sl is not None and signal.tp1 is not None:
                         signals.append(signal)
 
-                # ── HTF trend post-filter: drop counter-trend signals ──
-                filtered = []
-                for sig in signals:
-                    matches = df[df['open_time'] == sig.timestamp]
-                    if matches.empty:
-                        filtered.append(sig)
-                        continue
-                    row = matches.iloc[0]
-                    if strategy.htf_trend_filter(df, row, sig.direction):
-                        filtered.append(sig)
-                signals = filtered
-
             except Exception as e:
-                print(f"[StrategyRunner v2 historical] Error in {strategy.name}: {e}")
+                print(f"[StrategyRunner] Error in historical scan for {strategy.name}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
         return signals
 
-    @staticmethod
-    def _inject_sr_zones(df: pd.DataFrame, sr_zones: list[dict]):
-        """
-        Inject pre-computed S/R zones as DataFrame columns — time-aware.
 
-        Each zone is derived from swing points and carries a formed_at timestamp.
-        A zone is only active on rows whose open_time >= the zone's formed_at,
-        preventing lookahead bias.
-        """
-        # Find the strongest support and resistance AFTER the first ~100 candles
-        # to form a baseline. Only inject from the midpoint of the dataset onward
-        # to simulate live detection where you need history to form zones.
+def _inject_sr_zones(df: pd.DataFrame, sr_zones: list, midpoint: int = None):
+    """
+    Inject pre-computed S/R zones as DataFrame columns (time-aware).
+
+    Zones are only injected from the midpoint of the dataset onward
+    to prevent lookahead bias (simulating "zones formed by this point").
+    """
+    if midpoint is None:
         midpoint = max(100, len(df) // 3)
 
-        supports = [z for z in sr_zones if z.get('zone_type') in ('support', 'both')]
-        resistances = [z for z in sr_zones if z.get('zone_type') in ('resistance', 'both')]
+    supports = [z for z in sr_zones if z.get('zone_type') in ('support', 'both')]
+    resistances = [z for z in sr_zones if z.get('zone_type') in ('resistance', 'both')]
 
-        best_support = max(supports, key=lambda z: z.get('strength_score', 0), default=None)
-        best_resistance = max(resistances, key=lambda z: z.get('strength_score', 0), default=None)
+    best_support = max(supports, key=lambda z: z.get('strength_score', 0), default=None)
+    best_resistance = max(resistances, key=lambda z: z.get('strength_score', 0), default=None)
 
-        # Only inject from the midpoint onward — simulates "zones formed by this point"
-        if best_support or best_resistance:
-            df.loc[df.index[midpoint:], 'sr_active'] = True
+    if best_support or best_resistance:
+        df.loc[df.index[midpoint:], 'sr_active'] = True
 
-        if best_support:
-            df.loc[df.index[midpoint:], 'sr_support_upper'] = best_support.get('zone_upper', 0)
-            df.loc[df.index[midpoint:], 'sr_support_lower'] = best_support.get('zone_lower', 0)
-            df.loc[df.index[midpoint:], 'sr_support_strength'] = best_support.get('strength_score', 0)
+    if best_support:
+        df.loc[df.index[midpoint:], 'sr_support_upper'] = best_support.get('zone_upper', 0)
+        df.loc[df.index[midpoint:], 'sr_support_lower'] = best_support.get('zone_lower', 0)
+        df.loc[df.index[midpoint:], 'sr_support_strength'] = best_support.get('strength_score', 0)
 
-        if best_resistance:
-            df.loc[df.index[midpoint:], 'sr_resistance_upper'] = best_resistance.get('zone_upper', 0)
-            df.loc[df.index[midpoint:], 'sr_resistance_lower'] = best_resistance.get('zone_lower', 0)
-            df.loc[df.index[midpoint:], 'sr_resistance_strength'] = best_resistance.get('strength_score', 0)
+    if best_resistance:
+        df.loc[df.index[midpoint:], 'sr_resistance_upper'] = best_resistance.get('zone_upper', 0)
+        df.loc[df.index[midpoint:], 'sr_resistance_lower'] = best_resistance.get('zone_lower', 0)
+        df.loc[df.index[midpoint:], 'sr_resistance_strength'] = best_resistance.get('strength_score', 0)

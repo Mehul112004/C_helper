@@ -135,6 +135,37 @@ def compute_keltner(
     return {'kc_upper': upper, 'kc_middle': ema, 'kc_lower': lower}
 
 
+def compute_adx(highs: pd.Series, lows: pd.Series, closes: pd.Series, period: int = 14) -> pd.Series:
+    """
+    Average Directional Index (ADX) — trend strength indicator.
+
+    Contract:
+      Input:  Three pd.Series of same index
+      Output: pd.Series of same index, float64, range [0, 100]
+      NaN:    First 2*period values are NaN.
+    """
+    prev_close = closes.shift(1)
+    tr = pd.concat([
+        highs - lows,
+        (highs - prev_close).abs(),
+        (lows - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    up_move = highs - highs.shift(1)
+    down_move = lows.shift(1) - lows
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    plus_dm = pd.Series(plus_dm, index=highs.index).ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    minus_dm = pd.Series(minus_dm, index=lows.index).ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    with np.errstate(divide='ignore', invalid='ignore'):
+        plus_di = 100.0 * plus_dm / atr
+        minus_di = 100.0 * minus_dm / atr
+        dx = 100.0 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+    adx = pd.Series(dx, index=highs.index).ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    adx = adx.where(atr > 0, np.nan)
+    return adx
+
+
 def compute_volume_ma(volumes: pd.Series, period: int = 20) -> pd.Series:
     """
     Simple Moving Average of volume.
