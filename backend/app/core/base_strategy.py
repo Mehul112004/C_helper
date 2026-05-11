@@ -379,7 +379,7 @@ class BaseStrategy(ABC):
 
     def should_confirm_with_llm(self, signal: SetupSignal) -> bool:
         """Whether to send this signal to the LLM for confirmation."""
-        return False  # Default: no LLM, signals fire directly
+        return True  # Enabled by default — v2 structured context payload
 
 
 # ── Utility: safe boolean comparisons (NaN → False) ──

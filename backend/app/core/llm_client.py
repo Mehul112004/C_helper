@@ -1,224 +1,239 @@
+"""
+LLM Client v2 — Structured Context Evaluation
+
+Receives a structured multi-dimensional payload from llm_context_builder
+instead of flat text from Candle/Indicators objects. The structured format
+lets the LLM reason across 5 dimensions with precise numeric data.
+
+The prompt is now a clean system prompt + JSON payload → LLM → JSON verdict.
+"""
+
 import json
 import logging
-import requests
-from typing import Optional, Dict, Any, List, Tuple
-from datetime import datetime
+from typing import Optional, Dict, Any, Tuple
+
 from pydantic import BaseModel, Field, ValidationError
 
-from app.core.base_strategy import SetupSignal, Candle, Indicators
 from app.core.llm_providers.factory import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
-# Minimum confidence score from LLM to allow a CONFIRM verdict
-LLM_CONFIDENCE_THRESHOLD = 4
+LLM_CONFIDENCE_THRESHOLD = 4  # Minimum score (1-10) for CONFIRM verdict
+
 
 class LLMVerdictSchema(BaseModel):
-    """Chain-of-Thought schema: reasoning MUST come before verdict to prevent hallucination."""
-    reasoning: str = Field(..., description="Step-by-step analysis: (1) trend alignment, (2) candle momentum check, (3) S/R proximity, (4) risk/reward assessment. Be specific about numbers.")
-    confidence_score: int = Field(..., description="Confidence in the trade on a scale of 1-10. 1=extremely risky, 10=textbook setup.")
-    verdict: str = Field(..., description="Must be exactly CONFIRM, REJECT, or MODIFY. Derived from your reasoning above.")
-    modified_sl: Optional[float] = Field(None, description="Suggested Stop Loss if verdict is MODIFY")
-    modified_tp1: Optional[float] = Field(None, description="Suggested TP1 if verdict is MODIFY")
-    modified_tp2: Optional[float] = Field(None, description="Suggested TP2 if verdict is MODIFY")
+    """Chain-of-thought verdict: reasoning MUST come before verdict."""
+    reasoning: str = Field(...,
+        description="Step-by-step analysis across all 5 dimensions. Be specific with numbers.")
+    confidence_score: int = Field(...,
+        description="Confidence 1-10. 1=extremely risky, 10=textbook setup.")
+    verdict: str = Field(...,
+        description="Must be exactly CONFIRM, REJECT, or MODIFY.")
+    modified_sl: Optional[float] = Field(None)
+    modified_tp1: Optional[float] = Field(None)
+    modified_tp2: Optional[float] = Field(None)
+
 
 class LLMClient:
     """
-    Client for interacting with the local LM Studio instance.
-    Formats market context and parses the JSON response using Pydantic.
+    Evaluates trading signals via LLM using structured market context.
+
+    The context payload contains 5 dimensions:
+      1. signal_metadata    — symbol, strategy, timeframe, direction, levels
+      2. market_structure   — bias, BOS/CHoCH, OB, FVG, sweep, swing levels
+      3. indicators         — RSI+gradient+divergence, EMA alignment, MACD, BB, ADX
+      4. volume             — RVOL, climax status
+      5. htf_context        — primary + higher timeframe biases
+      6. recent_price_action — last 20 OHLCV candles
     """
 
+    SYSTEM_PROMPT = (
+        "You are an elite crypto trading risk manager. Your job is to PROTECT capital. "
+        "You will receive a structured JSON payload containing market context across "
+        "5 dimensions: market structure, indicators, volume, multi-timeframe context, "
+        "and recent price action.\n\n"
+        "ANALYZE EACH DIMENSION in your reasoning:\n"
+        "1. Market Structure: Is the bias aligned with the trade direction? "
+        "Are there BOS/CHoCH events confirming? Is price near an OB or FVG?\n"
+        "2. Indicators: Is RSI gradient aligned? Any divergence? Are EMAs stacked "
+        "correctly? Is MACD accelerating in the trade direction?\n"
+        "3. Volume: Is RVOL > 1.0 confirming participation? Any climax exhaustion?\n"
+        "4. HTF Context: Do higher timeframes support or oppose this trade?\n"
+        "5. Price Action: Check recent candles for rejection wicks, engulfing, pin bars.\n\n"
+        "DECISION RULES:\n"
+        "- CONFIRM: All dimensions align. Confidence >= 7 required. Strategy confidence + "
+        "market alignment both strong.\n"
+        "- REJECT: Any dimension strongly opposes (counter-trend, low volume, negative divergence). "
+        "Default to REJECT if unsure.\n"
+        "- MODIFY: Trade is valid but SL/TP need adjustment based on ATR or structural levels.\n\n"
+        "Respond ONLY in valid JSON (no markdown, no code blocks):\n"
+        '{"reasoning": "...", "confidence_score": 5, "verdict": "CONFIRM", '
+        '"modified_sl": null, "modified_tp1": null, "modified_tp2": null}'
+    )
+
     @staticmethod
-    def _build_prompt_context(
-        signal: SetupSignal,
-        candles: list[Candle],
-        indicators: Indicators,
-        sr_zones: list[dict],
-        htf_candles: list[Candle] = None
-    ) -> str:
-        """
-        Constructs the system/user prompt combining the setup and the raw data.
-        Limits the candle data to the last 20 to reduce context size and speed up inference.
-        """
-        # Take the last 20 candles (reduced from 30 to speed up LLM response)
-        recent_candles = candles[-20:] if len(candles) >= 20 else candles
-        candle_text = "Recent Candles (OHLCV):\n"
-        for c in recent_candles:
-            candle_text += f"{c.open_time.strftime('%Y-%m-%d %H:%M')} O:{c.open:.2f} H:{c.high:.2f} L:{c.low:.2f} C:{c.close:.2f} V:{c.volume:.0f}\n"
-
-        # Indicators text — only include non-None values
-        ind_parts = []
-        if indicators.rsi_14 is not None:
-            ind_parts.append(f"RSI(14): {indicators.rsi_14:.1f}")
-        if indicators.macd_line is not None:
-            ind_parts.append(f"MACD: {indicators.macd_line:.4f}, Signal: {indicators.macd_signal:.4f}, Hist: {indicators.macd_histogram:.4f}")
-        if indicators.ema_9 is not None:
-            ind_parts.append(f"EMA9: {indicators.ema_9:.2f}")
-        if indicators.ema_21 is not None:
-            ind_parts.append(f"EMA21: {indicators.ema_21:.2f}")
-        if indicators.ema_50 is not None:
-            ind_parts.append(f"EMA50: {indicators.ema_50:.2f}")
-        if indicators.ema_200 is not None:
-            ind_parts.append(f"EMA200: {indicators.ema_200:.2f}")
-        if indicators.bb_upper is not None:
-            ind_parts.append(f"BB: U:{indicators.bb_upper:.2f} M:{indicators.bb_middle:.2f} L:{indicators.bb_lower:.2f}")
-        if indicators.atr_14 is not None:
-            ind_parts.append(f"ATR(14): {indicators.atr_14:.4f}")
-        ind_text = "Indicators:\n" + "\n".join(ind_parts) + "\n" if ind_parts else ""
-
-        # Candle Momentum Analysis — inject concrete numbers for the LLM
-        current = candles[-1] if candles else None
-        momentum_text = ""
-        if current and indicators.atr_14:
-            range_ratio = current.range_size / indicators.atr_14 if indicators.atr_14 > 0 else 0
-            body_ratio = current.body_size / indicators.atr_14 if indicators.atr_14 > 0 else 0
-            candle_type = "BULLISH" if current.is_bullish else "BEARISH"
-            momentum_text = (
-                f"Candle Momentum Analysis (SETUP CANDLE):\n"
-                f"  Type: {candle_type} | Body: {current.body_size:.2f} | Range: {current.range_size:.2f}\n"
-                f"  Body/ATR ratio: {body_ratio:.2f}x | Range/ATR ratio: {range_ratio:.2f}x\n"
-                f"  Upper wick: {current.upper_wick:.2f} | Lower wick: {current.lower_wick:.2f}\n"
-                f"  NOTE: Body/ATR > 1.0x = aggressive candle. Range/ATR > 1.5x = abnormal volatility.\n\n"
-            )
-
-        # S/R Zones text
-        sr_text = ""
-        if sr_zones:
-            sr_text = "S/R Zones:\n"
-            for idx, z in enumerate(sr_zones[:5]): # limit to 5
-                sr_text += f"  {z.get('zone_type')} at {z.get('price_level')} (score: {z.get('strength_score', 0):.2f})\n"
-
-        tf_warning = ""
-        if signal.timeframe in ['5m', '15m']:
-            tf_warning = "WARNING: This is a low timeframe (5m/15m) signal which is highly noisy. You MUST be extremely critical and strictly REJECT this signal unless there is absolute perfect confluence across all indicators and strong S/R zones. Default to REJECT for these unless perfectly clear.\n\n"
-
-        htf_text = ""
-        if htf_candles:
-            htf_text = "Higher Timeframe (Macro Trend) Candles:\n"
-            for c in htf_candles[-10:]:
-                htf_text += f"{c.open_time.strftime('%Y-%m-%d %H:%M')} O:{c.open:.2f} C:{c.close:.2f}\n"
+    def _build_prompt(context: Dict[str, Any]) -> str:
+        """Build the user prompt from the structured context payload."""
+        meta = context.get('signal_metadata', {})
+        structure = context.get('market_structure', {})
+        indicators = context.get('indicators', {})
+        volume = context.get('volume', {})
+        htf = context.get('htf_context', {})
 
         prompt = (
-            f"You are an elite crypto trading risk manager. Your job is to PROTECT capital. "
-            f"Review this algorithmic signal and decide: CONFIRM, REJECT, or MODIFY.\n\n"
-            f"{tf_warning}"
-            f"CRITICAL RULES:\n"
-            f"1. You MUST write your full reasoning FIRST, then assign a confidence score, then give the verdict.\n"
-            f"2. Only reference indicators that are provided in the data below. Do NOT invent or hallucinate data points.\n"
-            f"3. If you are unsure, REJECT. Capital preservation is the priority.\n\n"
-            f"VERIFICATION STEPS (analyze each one in your reasoning):\n"
-            f"1. Candle Momentum: Check the Body/ATR and Range/ATR ratios. If the setup candle is abnormally large (body > 1.0x ATR), "
-            f"this may be a momentum crash, not a pullback. Be very suspicious.\n"
-            f"2. Trend Alignment: Does the signal align with the Higher Timeframe trend? If not, REJECT.\n"
-            f"3. Micro-Structure: Are you buying into immediate resistance or shorting into support? If yes, REJECT.\n"
-            f"4. Risk/Reward: Is the SL too tight for current ATR volatility? If yes, MODIFY the SL to be safer.\n\n"
-            f"Pair: {signal.symbol} | TF: {signal.timeframe} | Dir: {signal.direction} | Strategy: {signal.strategy_name}\n"
-            f"Entry: {signal.entry} | SL: {signal.sl} | TP1: {signal.tp1} | TP2: {signal.tp2} | Conf: {signal.confidence:.2f}\n"
-            f"Notes: {signal.notes}\n\n"
-            f"{momentum_text}"
-            f"{ind_text}\n"
-            f"{sr_text}\n"
-            f"{htf_text}\n"
-            f"{candle_text}\n"
-            f"Respond ONLY in valid JSON. Write reasoning FIRST, then confidence_score (1-10), then verdict:\n"
-            f'{{"reasoning": "your step-by-step analysis here", "confidence_score": 1, "verdict": "CONFIRM|REJECT|MODIFY", '
-            f'"modified_sl": null, "modified_tp1": null, "modified_tp2": null}}\n'
+            f"EVALUATE THIS TRADING SIGNAL:\n\n"
+            f"Symbol: {meta.get('symbol')} | Strategy: {meta.get('strategy')} | "
+            f"TF: {meta.get('timeframe')} | Side: {meta.get('side')}\n"
+            f"Entry: {meta.get('entry')} | SL: {meta.get('sl')} | "
+            f"TP1: {meta.get('tp1')} | TP2: {meta.get('tp2')}\n"
+            f"Strategy Confidence: {meta.get('confidence')} | Regime: {meta.get('regime')}\n\n"
+
+            f"═══ MARKET STRUCTURE ═══\n"
+            f"Bias: {structure.get('current_bias')} | Structural: {structure.get('structural_bias')}\n"
+            f"Last SMC Event: {structure.get('last_event', 'N/A')}\n"
+            f"Liquidity Sweep Recent: {structure.get('liquidity_sweep_recent', False)}\n"
+            f"OB Active: {structure.get('nearest_order_block', {}).get('active', False)}\n"
+            f"FVG Status: {structure.get('fvg_status', 'N/A')}\n"
+            f"Swing High: {structure.get('recent_swing_high')} | "
+            f"Swing Low: {structure.get('recent_swing_low')}\n"
+            f"Price Position in Range: {structure.get('price_position_in_range_pct', 'N/A')}%\n\n"
+
+            f"═══ INDICATORS ═══\n"
+            f"RSI: {indicators.get('rsi', 'N/A')} | "
+            f"Gradient: {indicators.get('rsi_gradient', 'N/A')} | "
+            f"Divergence: {indicators.get('rsi_divergence', 'N/A')}\n"
+            f"EMA Alignment: {indicators.get('ema_alignment', 'N/A')}\n"
+            f"BB State: {indicators.get('bb_state', 'N/A')}\n"
+            f"ADX: {indicators.get('adx', 'N/A')} | "
+            f"Trend Strength: {indicators.get('trend_strength', 'N/A')}\n"
         )
+
+        if indicators.get('macd'):
+            m = indicators['macd']
+            prompt += f"MACD: Hist={m.get('histogram')} | {m.get('momentum')} | {m.get('direction')}\n"
+
+        if indicators.get('ema_values'):
+            prompt += f"EMA Values: {indicators['ema_values']}\n"
+
+        prompt += (
+            f"\n═══ VOLUME ═══\n"
+            f"RVOL: {volume.get('rvol', 'N/A')}x | "
+            f"Volume Climax: {volume.get('is_climax', False)}\n\n"
+
+            f"═══ HTF CONTEXT ═══\n"
+            f"Primary Bias: {htf.get('primary_bias', 'N/A')}\n"
+        )
+
+        for k, v in htf.items():
+            if k != 'primary_bias':
+                prompt += f"{k}: {v}\n"
+
+        prompt += (
+            f"\n═══ RECENT PRICE ACTION ═══\n"
+            f"See attached candles array in the context.\n"
+            f"Look for: pin bars (long wick, small body), engulfing candles, "
+            f"doji indecision, and support/resistance tests.\n\n"
+            f"Respond with JSON only: {{\"reasoning\": \"...\", \"confidence_score\": N, "
+            f"\"verdict\": \"CONFIRM|REJECT|MODIFY\", \"modified_sl\": null, ...}}"
+        )
+
         return prompt
 
     @staticmethod
-    def evaluate_signal(
-        signal: SetupSignal,
-        candles: list[Candle],
-        indicators: Indicators,
-        sr_zones: list[dict],
-        htf_candles: list[Candle] = None
-    ) -> Tuple[Optional[LLMVerdictSchema], str, str]:
+    def evaluate_signal(context: Dict[str, Any]) -> Tuple[Optional[LLMVerdictSchema], str, str]:
         """
-        Sends the signal and context to the configured LLM synchronously.
-        Returns a tuple: (parsed LLMVerdictSchema or None, prompt used, raw response text).
+        Evaluate a trading signal using the structured context payload.
+
+        Args:
+            context: Dict from llm_context_builder.build_llm_context()
+
+        Returns:
+            Tuple: (parsed LLMVerdictSchema or None, prompt_text, raw_response_text)
         """
-        prompt = LLMClient._build_prompt_context(signal, candles, indicators, sr_zones, htf_candles)
-        
-        system_prompt = (
-            "You are a quantitative trading risk manager. "
-            "You may use your internal reasoning capabilities first. "
-            "However, your final, conclusive output MUST be a valid JSON object matching the requested schema. "
-            "CRITICAL: Do NOT use newlines (\\n) inside JSON string values. Write the JSON reasoning key as a single paragraph."
-        )
+        prompt = LLMClient._build_prompt(context)
 
         try:
             provider = get_llm_provider()
-            content, raw_response = provider.evaluate_prompt(system_prompt, prompt)
-            
+            content, raw_response = provider.evaluate_prompt(
+                LLMClient.SYSTEM_PROMPT, prompt
+            )
+
             if not content:
-                # Logging happens in provider, just return
                 return None, prompt, raw_response
 
             logger.info(f"[LLMClient] Received response ({len(content)} chars)")
-            
-            # Defensive strip of markdown codeblocks occasionally generated by LLMs
-            if content.startswith("```json"):
-                content = content[7:]
-            elif content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
-            
-            # Some models wrap in <think>...</think> tags — strip those
-            if "<think>" in content:
-                think_end = content.find("</think>")
-                if think_end != -1:
-                    content = content[think_end + 8:].strip()
-            
-            # Try to find JSON object if there's extra text around it
-            if not content.startswith("{"):
-                json_start = content.find("{")
-                if json_start != -1:
-                    content = content[json_start:]
-            if not content.endswith("}"):
-                json_end = content.rfind("}")
-                if json_end != -1:
-                    content = content[:json_end + 1]
 
-            # Parse with builtin JSON parser allowing strict=False for control characters (e.g. unescaped newlines)
-            raw_dict = json.loads(content, strict=False)
-            parsed = LLMVerdictSchema.model_validate(raw_dict)
-            
-            # Ensure proper string matching
-            if parsed.verdict not in ('CONFIRM', 'REJECT', 'MODIFY'):
-                logger.error(f"LLM produced invalid verdict: {parsed.verdict}")
-                return None, prompt, raw_response
+            return _parse_llm_response(content, prompt, raw_response)
 
-            # Clamp confidence_score to valid range
-            parsed.confidence_score = max(1, min(10, parsed.confidence_score))
-
-            # Safety net: auto-downgrade low-confidence CONFIRMs
-            if parsed.verdict == 'CONFIRM' and parsed.confidence_score < LLM_CONFIDENCE_THRESHOLD:
-                logger.warning(
-                    f"[LLMClient] Auto-downgrade: LLM said CONFIRM but confidence_score={parsed.confidence_score} "
-                    f"(< {LLM_CONFIDENCE_THRESHOLD}). Overriding to REJECT."
-                )
-                parsed.verdict = 'REJECT'
-                parsed.reasoning += f" [AUTO-REJECTED: confidence_score {parsed.confidence_score}/10 below threshold {LLM_CONFIDENCE_THRESHOLD}]"
-
-            return parsed, prompt, raw_response
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"LLM JSON Decode error: {str(e)}\nRaw Response: {content}")
-            return None, prompt, f"ERROR: JSONDecodeError - {str(e)}\nRaw block: {raw_response}"
-        except ValidationError as e:
-            logger.error(f"LLM JSON Schema validation error: {str(e)}\nRaw Response: {content}")
-            return None, prompt, f"ERROR: ValidationError - {str(e)}\nRaw block: {raw_response}"
         except Exception as e:
-            logger.error(f"Unexpected error in LLM evaluate_signal: {str(e)}")
-            return None, prompt, f"ERROR: Unexpected exception - {str(e)}"
+            logger.error(f"Unexpected error in LLM evaluate_signal: {e}")
+            return None, prompt, f"ERROR: {e}"
 
-    @staticmethod
-    def ping_status() -> bool:
-        """
-        Pings the LLM backend to verify it is online.
-        """
-        provider = get_llm_provider()
-        return provider.ping_status()
+
+def _parse_llm_response(
+    content: str, prompt: str, raw_response: str
+) -> Tuple[Optional[LLMVerdictSchema], str, str]:
+    """Parse the LLM's JSON response, handling common formatting issues."""
+
+    # Strip markdown code blocks
+    if content.startswith("```json"):
+        content = content[7:]
+    elif content.startswith("```"):
+        content = content[3:]
+    if content.endswith("```"):
+        content = content[:-3]
+    content = content.strip()
+
+    # Strip <think>...</think> tags (some models)
+    if "<think>" in content:
+        think_end = content.find("</think>")
+        if think_end != -1:
+            content = content[think_end + 8:].strip()
+
+    # Find JSON object boundaries
+    if not content.startswith("{"):
+        json_start = content.find("{")
+        if json_start != -1:
+            content = content[json_start:]
+    if not content.endswith("}"):
+        json_end = content.rfind("}")
+        if json_end != -1:
+            content = content[:json_end + 1]
+
+    try:
+        raw_dict = json.loads(content, strict=False)
+        parsed = LLMVerdictSchema.model_validate(raw_dict)
+
+        if parsed.verdict not in ('CONFIRM', 'REJECT', 'MODIFY'):
+            logger.error(f"LLM produced invalid verdict: {parsed.verdict}")
+            return None, prompt, raw_response
+
+        parsed.confidence_score = max(1, min(10, parsed.confidence_score))
+
+        # Auto-downgrade low-confidence CONFIRMs
+        if parsed.verdict == 'CONFIRM' and parsed.confidence_score < LLM_CONFIDENCE_THRESHOLD:
+            logger.warning(
+                f"[LLMClient] Auto-downgrade: CONFIRM but confidence={parsed.confidence_score} "
+                f"< {LLM_CONFIDENCE_THRESHOLD}. Overriding to REJECT."
+            )
+            parsed.verdict = 'REJECT'
+            parsed.reasoning += (
+                f" [AUTO-REJECTED: confidence {parsed.confidence_score}/10 "
+                f"below threshold {LLM_CONFIDENCE_THRESHOLD}]"
+            )
+
+        return parsed, prompt, raw_response
+
+    except json.JSONDecodeError as e:
+        logger.error(f"LLM JSON decode error: {e}\nContent: {content[:200]}")
+        return None, prompt, f"JSONDecodeError: {e}"
+    except ValidationError as e:
+        logger.error(f"LLM schema validation error: {e}")
+        return None, prompt, f"ValidationError: {e}"
+
+
+@staticmethod
+def ping_status() -> bool:
+    """Check if the LLM backend is online."""
+    provider = get_llm_provider()
+    return provider.ping_status()

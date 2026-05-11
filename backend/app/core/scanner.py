@@ -364,7 +364,7 @@ class LiveScanner:
                 # 6. Fetch HTF context (for LLM context if needed later)
                 htf_candles = self._fetch_htf_candles(symbol, timeframe)
 
-                # 7. Run strategies (v3 — unified DataFrame path)
+                # 7. Run strategies (v3 — unified DataFrame path, returns (signal, df))
                 signals_found = 0
                 for strat_name in session.strategy_names:
                     strategy = registry.get_by_name(strat_name)
@@ -378,6 +378,33 @@ class LiveScanner:
                         symbol=symbol,
                         timeframe=timeframe,
                     )
+                    if result is None:
+                        continue
+                    signal, pre_df = result
+                    if signal is None:
+                        continue
+
+                    signals_found += 1
+                    print(f"[LiveScanner]    ✅ SIGNAL: {strat_name} → {signal.direction} "
+                          f"conf={signal.confidence:.2f}")
+                    setup_dict, is_new = WatchingManager.create_or_update_setup(session_id, signal)
+                    event_type = "setup_detected" if is_new else "setup_updated"
+                    sse_manager.publish(event_type, setup_dict)
+
+                    if is_new:
+                        telegram_queue.enqueue_watching_alert(setup_dict['id'])
+
+                        use_llm = (
+                            hasattr(strategy, 'should_confirm_with_llm')
+                            and strategy.should_confirm_with_llm(signal)
+                        )
+                        if use_llm:
+                            # Pass the pre-processed DataFrame for structured LLM context
+                            llm_queue.enqueue_signal(
+                                watching_setup_id=setup_dict['id'],
+                                signal=signal,
+                                pre_processed_df=pre_df,
+                            )
                     if result is None:
                         continue
                     signal, pre_df = result

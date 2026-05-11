@@ -1,3 +1,13 @@
+"""
+LLM Queue Manager v2 — Structured Context Evaluation
+
+Background worker that evaluates SetupSignals through the LLM using
+the new structured multi-dimensional payload from llm_context_builder.
+
+Receives pre-processed DataFrames (not Candle/Indicators objects) so
+the context builder can extract all 5 dimensions cleanly.
+"""
+
 import threading
 import queue
 import time
@@ -5,129 +15,179 @@ import logging
 from typing import Dict, Any, Tuple
 import uuid
 
-from app.core.base_strategy import SetupSignal, Candle, Indicators
+from app.core.base_strategy import SetupSignal
 from app.core.llm_client import LLMClient
+from app.core.llm_context_builder import build_llm_context
 from app.core.telegram_queue import telegram_queue
 from app.core.outcome_tracker import outcome_tracker
 from app.core.sse import sse_manager
 
 logger = logging.getLogger(__name__)
 
-# Queue payload type: 
-# (watching_setup_id, SetupSignal, candles_list, indicators_obj, sr_zones_list, htf_candles)
-QueuePayload = Tuple[str, SetupSignal, list[Candle], Indicators, list[dict], list[Candle]]
+# Queue payload: (watching_setup_id, signal, pre_processed_df, htf_data_dict)
+QueuePayload = Tuple[str, SetupSignal, Any, Dict[str, Any]]
+
 
 class LLMQueueManager:
-    """
-    Background worker that processes SetupSignals through the LLM.
-    Prevents the live scanner (which runs on Binance WS events) from blocking.
-    """
+    """Background worker for LLM signal evaluation with structured context."""
+
     def __init__(self):
         self._q = queue.Queue()
         self._worker_thread = None
         self._stop_event = threading.Event()
         self._app = None
-        
+
     def set_app(self, app):
-        """Pass the Flask application context."""
         self._app = app
-        
+
     def start(self):
         if self._worker_thread is None or not self._worker_thread.is_alive():
             self._stop_event.clear()
-            self._worker_thread = threading.Thread(target=self._run_worker, daemon=True, name="LLMWorker")
+            self._worker_thread = threading.Thread(
+                target=self._run_worker, daemon=True, name="LLMWorker"
+            )
             self._worker_thread.start()
-            logger.info("LLM background worker started.")
+            logger.info("LLM background worker started (v2 structured context).")
 
     def stop(self):
         self._stop_event.set()
         if self._worker_thread:
-            # We put a dummy item to break the blocking get() if empty
             self._q.put(None)
             self._worker_thread.join(timeout=2)
             logger.info("LLM background worker stopped.")
 
-    def enqueue_signal(self, watching_setup_id: str, signal: SetupSignal, candles: list[Candle], indicators: Indicators, sr_zones: list[dict], htf_candles: list[Candle] = None):
-        """Place a candidate signal in the queue to be evaluated."""
-        self._q.put((watching_setup_id, signal, candles, indicators, sr_zones, htf_candles))
-        logger.info(f"Enqueued signal for {signal.symbol} / {signal.strategy_name}. Queue size: {self._q.qsize()}")
+    def enqueue_signal(
+        self,
+        watching_setup_id: str,
+        signal: SetupSignal,
+        pre_processed_df: Any = None,
+        htf_data: Dict[str, Any] = None,
+    ):
+        """
+        Enqueue a signal for LLM evaluation with pre-processed DataFrame context.
+
+        Args:
+            watching_setup_id: ID of the WatchingSetup
+            signal: SetupSignal object
+            pre_processed_df: Pre-processed DataFrame from strategy.pre_process() + generate_signals()
+            htf_data: Optional dict of timeframe → pre-processed DataFrame
+        """
+        self._q.put((watching_setup_id, signal, pre_processed_df, htf_data or {}))
+        logger.info(
+            f"Enqueued signal for {signal.symbol} / {signal.strategy_name}. "
+            f"Queue size: {self._q.qsize()}"
+        )
 
     def _run_worker(self):
         MAX_RETRIES = 3
-        RETRY_DELAYS = [15, 30, 60]  # Increasing backoff
-        PACING_DELAY = 20  # Hard pacing to stay under 6000 TPM limit (3 req/min)
+        RETRY_DELAYS = [15, 30, 60]
+        PACING_DELAY = 20  # Rate limit pacing
 
         while not self._stop_event.is_set():
             try:
-                # Block for up to 1 second
                 item = self._q.get(timeout=1)
                 if item is None:
-                    continue  # Stop signal injected
+                    continue
 
-                # We no longer read retry_count from the queue tuple, all retries are inline
-                watching_setup_id, signal, candles, indicators, sr_zones, htf_candles = item[:6]
+                watching_setup_id, signal, pre_df, htf_data = item[:4]
+
+                # Build the structured context payload
+                if pre_df is not None:
+                    try:
+                        context = build_llm_context(
+                            df=pre_df,
+                            signal=signal.to_dict() if hasattr(signal, 'to_dict') else {
+                                'strategy_name': signal.strategy_name,
+                                'timeframe': signal.timeframe,
+                                'direction': signal.direction,
+                                'entry': signal.entry,
+                                'sl': signal.sl,
+                                'tp1': signal.tp1,
+                                'tp2': signal.tp2,
+                                'confidence': signal.confidence,
+                            },
+                            symbol=signal.symbol,
+                            htf_data=htf_data if htf_data else None,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to build LLM context: {e}")
+                        self._log_prompt(watching_setup_id, signal, None, "",
+                                         f"Context build error: {e}")
+                        continue
+                else:
+                    context = {"error": "No pre-processed DataFrame available"}
 
                 success = False
                 for attempt in range(MAX_RETRIES + 1):
                     if self._stop_event.is_set():
                         break
 
-                    # Check Provider connectivity
                     if not LLMClient.ping_status():
-                        logger.warning("LLM Provider is unreachable. Backing off 30s...")
-                        continue_backoff = 30
-                        for _ in range(continue_backoff):
-                            if self._stop_event.is_set(): break
+                        logger.warning("LLM unreachable. Backing off 30s...")
+                        for _ in range(30):
+                            if self._stop_event.is_set():
+                                break
                             time.sleep(1)
                         continue
-                    
-                    logger.info(f"Processing LLM evaluation for {signal.symbol} - {signal.strategy_name} "
-                                f"(attempt {attempt + 1}/{MAX_RETRIES + 1})")
-                    verdict_data, prompt, raw_response = LLMClient.evaluate_signal(signal, candles, indicators, sr_zones, htf_candles)
-                    
-                    # Log every interaction
+
+                    logger.info(
+                        f"LLM evaluation: {signal.symbol} {signal.strategy_name} "
+                        f"(attempt {attempt + 1}/{MAX_RETRIES + 1})"
+                    )
+
+                    verdict_data, prompt, raw_response = LLMClient.evaluate_signal(context)
+
+                    # Log the interaction
                     self._log_prompt(watching_setup_id, signal, verdict_data, prompt, raw_response)
-                    
+
                     if verdict_data:
-                        logger.info(f"[LLMQueue] Verdict={verdict_data.verdict} confidence={verdict_data.confidence_score}/10 "
-                                    f"for {signal.symbol}/{signal.strategy_name}")
+                        logger.info(
+                            f"[LLMQueue] Verdict={verdict_data.verdict} "
+                            f"confidence={verdict_data.confidence_score}/10 "
+                            f"for {signal.symbol}/{signal.strategy_name}"
+                        )
                         self._handle_verdict(watching_setup_id, signal, verdict_data)
                         success = True
-                        
-                        # Hard pacing to prevent TPM (Tokens Per Minute) and RPM limits on cloud providers
-                        logger.info(f"LLM request successful. Pacing queue for {PACING_DELAY}s to respect rate limits.")
+
+                        # Rate limit pacing
+                        logger.info(f"Pacing {PACING_DELAY}s for rate limits...")
                         for _ in range(PACING_DELAY):
-                            if self._stop_event.is_set(): break
+                            if self._stop_event.is_set():
+                                break
                             time.sleep(1)
                         break
                     else:
                         if attempt < MAX_RETRIES:
                             delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
-                            logger.warning(f"LLM returned no valid verdict. Retry {attempt + 1}/{MAX_RETRIES} "
-                                           f"after {delay}s delay.")
-                            # Sleep in 1s chunks to allow clean exiting
+                            logger.warning(
+                                f"LLM returned no verdict. Retry {attempt + 1}/{MAX_RETRIES} "
+                                f"after {delay}s."
+                            )
                             for _ in range(delay):
-                                if self._stop_event.is_set(): break
+                                if self._stop_event.is_set():
+                                    break
                                 time.sleep(1)
                         else:
-                            logger.error(f"LLM failed after {MAX_RETRIES + 1} attempts for "
-                                         f"{signal.symbol}/{signal.strategy_name}. Dropping signal.")
-                            
+                            logger.error(
+                                f"LLM failed after {MAX_RETRIES + 1} attempts for "
+                                f"{signal.symbol}/{signal.strategy_name}. Dropping signal."
+                            )
+
             except queue.Empty:
                 continue
             except Exception as e:
                 logger.error(f"Error in LLM queue worker: {e}")
                 time.sleep(5)
 
-    def _log_prompt(self, watching_setup_id: str, signal: SetupSignal, verdict_data, prompt: str, raw_response: str):
+    def _log_prompt(self, watching_setup_id, signal, verdict_data, prompt, raw_response):
         if not self._app:
             return
         with self._app.app_context():
             from app.models.db import db, LLMPromptLog
             from app.core.llm_providers.factory import get_llm_provider
-            
+
             parsed_verdict = verdict_data.verdict if verdict_data else 'ERROR'
-            
+
             try:
                 provider = get_llm_provider()
                 new_log = LLMPromptLog(
@@ -135,14 +195,14 @@ class LLMQueueManager:
                     symbol=signal.symbol,
                     strategy_name=signal.strategy_name,
                     model_name=provider.model,
-                    prompt_text=prompt,
-                    response_text=raw_response,
-                    parsed_verdict=parsed_verdict
+                    prompt_text=prompt[:2000],
+                    response_text=raw_response[:2000] if raw_response else "",
+                    parsed_verdict=parsed_verdict,
                 )
                 db.session.add(new_log)
                 db.session.commit()
-                
-                # Cleanup: keep only last 1000
+
+                # Cleanup old logs
                 count = db.session.query(LLMPromptLog).count()
                 if count > 1000:
                     subq = (
@@ -158,36 +218,45 @@ class LLMQueueManager:
             except Exception as e:
                 logger.error(f"Failed to log LLM prompt: {e}")
 
-    def _handle_verdict(self, watching_setup_id: str, signal: SetupSignal, verdict_data):
+    def _handle_verdict(self, watching_setup_id, signal, verdict_data):
         if not self._app:
             logger.error("Flask app context not set in LLMQueueManager")
             return
-            
+
         with self._app.app_context():
             from app.models.db import db, ConfirmedSignal, WatchingSetup, RejectedSignal
-            
+
             w_setup = WatchingSetup.query.get(watching_setup_id)
             if not w_setup:
                 return
 
             v_str = verdict_data.verdict
-            
-            # Map LLM verdict string to formal database schema state
+
             if v_str in ('CONFIRM', 'MODIFY'):
                 w_setup.status = 'CONFIRMED'
             else:
                 w_setup.status = 'REJECTED'
-            
-            # Broadcast state change to clients (which natively clears it out of the watching UI)
+
             sse_manager.publish('setup_updated', w_setup.to_dict())
-            
+
             if v_str in ('CONFIRM', 'MODIFY'):
-                # Handle modifying the levels
-                db_entry = signal.entry if signal.entry else getattr(w_setup, 'entry', 0.0)
-                db_sl = verdict_data.modified_sl if v_str == 'MODIFY' and verdict_data.modified_sl else getattr(w_setup, 'sl', 0.0)
-                db_tp1 = verdict_data.modified_tp1 if v_str == 'MODIFY' and verdict_data.modified_tp1 else getattr(w_setup, 'tp1', 0.0)
-                db_tp2 = verdict_data.modified_tp2 if v_str == 'MODIFY' and verdict_data.modified_tp2 else getattr(w_setup, 'tp2', 0.0)
-                
+                db_entry = signal.entry or getattr(w_setup, 'entry', 0.0)
+                db_sl = (
+                    verdict_data.modified_sl
+                    if v_str == 'MODIFY' and verdict_data.modified_sl
+                    else getattr(w_setup, 'sl', 0.0)
+                )
+                db_tp1 = (
+                    verdict_data.modified_tp1
+                    if v_str == 'MODIFY' and verdict_data.modified_tp1
+                    else getattr(w_setup, 'tp1', 0.0)
+                )
+                db_tp2 = (
+                    verdict_data.modified_tp2
+                    if v_str == 'MODIFY' and verdict_data.modified_tp2
+                    else getattr(w_setup, 'tp2', 0.0)
+                )
+
                 new_sig = ConfirmedSignal(
                     id=str(uuid.uuid4()),
                     watching_setup_id=watching_setup_id,
@@ -202,25 +271,21 @@ class LLMQueueManager:
                     tp2=db_tp2,
                     verdict_status=v_str,
                     reasoning_text=verdict_data.reasoning,
-                    trade_outcome='ACTIVE'
+                    trade_outcome='ACTIVE',
                 )
                 db.session.add(new_sig)
                 db.session.commit()
-                
-                # Emit SSE for Confirmed feed
+
                 payload = new_sig.to_dict()
                 payload['session_id'] = w_setup.session_id
                 sse_manager.publish('signal_confirmed', payload)
-                logger.info(f"Signal for {signal.symbol} confirmed by LLM ('{v_str}') and saved to DB.")
-                
-                # Trigger Telegram Notification
+                logger.info(f"Signal CONFIRMED by LLM: {signal.symbol} {signal.strategy_name}")
+
                 telegram_queue.enqueue_confirm_alert(new_sig.id)
-                
-                # Add to OutcomeTracker for live price checking
                 outcome_tracker.add_to_cache(new_sig)
-            
-            else: # REJECT
-                db_entry = signal.entry if signal.entry else getattr(w_setup, 'entry', 0.0)
+
+            else:  # REJECT
+                db_entry = signal.entry or getattr(w_setup, 'entry', 0.0)
                 db_sl = getattr(w_setup, 'sl', 0.0)
                 db_tp1 = getattr(w_setup, 'tp1', 0.0)
                 db_tp2 = getattr(w_setup, 'tp2', 0.0)
@@ -237,14 +302,14 @@ class LLMQueueManager:
                     sl=db_sl,
                     tp1=db_tp1,
                     tp2=db_tp2,
-                    reasoning_text=verdict_data.reasoning
+                    reasoning_text=verdict_data.reasoning,
                 )
                 db.session.add(new_rejected)
                 db.session.commit()
                 sse_manager.publish('setup_rejected', w_setup.to_dict())
-                logger.info(f"Signal for {signal.symbol} REJECTED by LLM. {verdict_data.reasoning}")
-                
-                # Trigger Telegram Notification for REJECT
+                logger.info(f"Signal REJECTED by LLM: {signal.symbol}")
+
                 telegram_queue.enqueue_reject_alert(watching_setup_id, verdict_data.reasoning)
+
 
 llm_queue = LLMQueueManager()
