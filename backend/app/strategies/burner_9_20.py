@@ -56,18 +56,21 @@ class Burner920Strategy(BaseStrategy):
         g1_bull = df['regime'] == 'TRENDING_UP'
         g1_bear = df['regime'] == 'TRENDING_DOWN'
 
-        # ── Hard Gate 2: Price pulls back to 9 EMA ──
+        # ── Hard Gate 2: EMA 9 vs EMA 20 alignment (direction check) ──
         ema9 = df['ema_9']
+        ema20 = df['ema_20']
         atr = df['atr']
-        g2_bull = ema9.notna() & atr.notna() & (df['low'] <= ema9 + 0.3 * atr) & (df['close'] > ema9)
-        g2_bear = ema9.notna() & atr.notna() & (df['high'] >= ema9 - 0.3 * atr) & (df['close'] < ema9)
+        # LONG: 9 must be above 20 AND spread must be significant (> 0.2 ATR)
+        g2_bull = ema9.notna() & ema20.notna() & (ema9 > ema20) & ((ema9 - ema20).abs() > 0.2 * atr)
+        # SHORT: 9 must be below 20 AND spread must be significant
+        g2_bear = ema9.notna() & ema20.notna() & (ema9 < ema20) & ((ema9 - ema20).abs() > 0.2 * atr)
 
-        # ── Hard Gate 3: 200 EMA macro filter ──
-        ema200 = df['ema_200']
-        g3_bull = ema200.notna() & (df['close'] > ema200)
-        g3_bear = ema200.notna() & (df['close'] < ema200)
+        # ── Hard Gate 3: Price pulls back to 9 EMA ──
+        g3_bull = ema9.notna() & atr.notna() & (df['low'] <= ema9 + 0.3 * atr) & (df['close'] > ema9)
+        g3_bear = ema9.notna() & atr.notna() & (df['high'] >= ema9 - 0.3 * atr) & (df['close'] < ema9)
 
-        hard_passed = ((g1_bull & g2_bull & g3_bull) | (g1_bear & g2_bear & g3_bear))
+        hard_passed = ((g1_bull & g2_bull & g3_bull) |
+                       (g1_bear & g2_bear & g3_bear))
         total_hard = 3
 
         # ── Soft Gate 1: RSI momentum (50-75 bull, 25-50 bear) ──

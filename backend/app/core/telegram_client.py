@@ -36,7 +36,7 @@ class TelegramBotClient:
         payload = {
             "chat_id": self.chat_id,
             "text": text,
-            "parse_mode": "Markdown",
+            "parse_mode": "MarkdownV2",
             "disable_web_page_preview": True
         }
         

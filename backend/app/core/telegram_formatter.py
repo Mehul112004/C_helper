@@ -1,5 +1,11 @@
+import re
 from datetime import datetime, timedelta
 from app.models.db import ConfirmedSignal
+
+_MD_SPECIAL = re.compile(r'([_*\[\]()~>#+\-=|{}.!])')
+
+def _escape_md(text: str) -> str:
+    return _MD_SPECIAL.sub(r'\\\1', str(text))
 
 def format_confirmed_signal(signal: ConfirmedSignal) -> str:
     """
@@ -30,15 +36,15 @@ def format_confirmed_signal(signal: ConfirmedSignal) -> str:
     msg = f"""
 {direction_badge} CONFIRMED SIGNAL
 
-*Pair*      : {signal.symbol}
-*Direction* : {signal.direction}
-*Timeframe* : {signal.timeframe}
+*Pair*      : {_escape_md(signal.symbol)}
+*Direction* : {_escape_md(signal.direction)}
+*Timeframe* : {_escape_md(signal.timeframe)}
 *Entry*     : ${signal.entry:,.4f}
 *SL*        : ${signal.sl:,.4f}
 *TP1*       : ${signal.tp1:,.4f}
 *TP2*       : ${signal.tp2:,.4f}
 *R/R*       : 1 : {rr_ratio:.1f}
-*Strategy*  : {signal.strategy_name}
+*Strategy*  : {_escape_md(signal.strategy_name)}
 *Confidence*: {signal.confidence * 100:.0f}%
 
 *Analysis*  :
@@ -68,20 +74,21 @@ def format_watching_signal(setup) -> str:
         time_str = dt.strftime("%d %b %Y %H:%M IST")
         
     notes = setup.notes.strip() if hasattr(setup, 'notes') and setup.notes else ""
+    notes = _escape_md(notes)
     
     msg = f"""
-{direction_badge} WATCHING SCAN (Not Confirmed)
+{direction_badge} WATCHING SCAN \\(Not Confirmed\\)
 
-*Pair*      : {setup.symbol}
-*Direction* : {setup.direction}
-*Timeframe* : {setup.timeframe}
-*Strategy*  : {setup.strategy_name}
+*Pair*      : {_escape_md(setup.symbol)}
+*Direction* : {_escape_md(setup.direction)}
+*Timeframe* : {_escape_md(setup.timeframe)}
+*Strategy*  : {_escape_md(setup.strategy_name)}
 *Confidence*: {setup.confidence * 100:.0f}%
 
 *Notes*     : 
 {notes}
 
-*Status*    : PENDING LLM CONFIRMATION...
+*Status*    : PENDING LLM CONFIRMATION\\.\\.\\.
 ⏱ {time_str}
 """
     return msg.strip()
@@ -105,11 +112,11 @@ def format_outcome_update(signal: ConfirmedSignal, outcome: str) -> str:
         label = "SL"
     elif outcome == "EXPIRED":
         icon = "⏳"
-        return f"{icon} {signal.symbol} {signal.direction} — Setup EXPIRED without entry."
+        return f"{icon} {_escape_md(signal.symbol)} {_escape_md(signal.direction)} — Setup EXPIRED without entry\\."
     else:
         icon = "ℹ️"
         level = 0.0
-    return f"{icon} {signal.symbol} {signal.direction} — {label} hit at ${level:,.4f}"
+    return f"{icon} {_escape_md(signal.symbol)} {_escape_md(signal.direction)} — {label} hit at ${level:,.4f}"
 
 def format_rejected_signal(setup, reasoning: str) -> str:
     """
@@ -118,8 +125,8 @@ def format_rejected_signal(setup, reasoning: str) -> str:
     msg = f"""
 🚫 *REJECTED*
 
-*Pair*      : {setup.symbol}
+*Pair*      : {_escape_md(setup.symbol)}
 *Reasoning* : 
-{reasoning}
+{_escape_md(reasoning)}
 """
     return msg.strip()

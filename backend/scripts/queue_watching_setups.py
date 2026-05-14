@@ -9,17 +9,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app import create_app
-from app.models.db import db, WatchingSetup, Candle as CandleModel, SRZone
-from app.core.base_strategy import SetupSignal, Candle
-from app.core.indicator_service import IndicatorService
+from app.models.db import db, WatchingSetup
+from app.core.base_strategy import SetupSignal
 from app.core.strategy_runner import StrategyRunner
-from app.core.scanner import live_scanner
+from app.core.strategy_loader import registry
 from app.core.llm_queue import llm_queue
+from app.core.data_utils import get_finalized_candles
 
 def process_watching_setups():
     app = create_app()
     with app.app_context():
-        # Force LLMQueue to know the app context and start the background worker
         llm_queue.set_app(app)
         llm_queue.start()
 
@@ -31,7 +30,16 @@ def process_watching_setups():
         for setup in setups:
             print(f"Queueing: {setup.id} ({setup.symbol} {setup.timeframe} {setup.strategy_name})")
 
-            # 1. Reconstruct SetupSignal
+            strategy = registry.get_by_name(setup.strategy_name)
+            if not strategy:
+                print(f"  -> ⚠ Strategy '{setup.strategy_name}' not found in registry. Skipping.")
+                continue
+
+            if setup.timeframe not in strategy.timeframes:
+                print(f"  -> ⚠ Timeframe {setup.timeframe} not supported by {setup.strategy_name}. Skipping.")
+                continue
+
+            # Reconstruct SetupSignal
             signal = SetupSignal(
                 symbol=setup.symbol,
                 timeframe=setup.timeframe,
@@ -45,49 +53,26 @@ def process_watching_setups():
                 notes=setup.notes
             )
 
-            # 2. Fetch candles (last 50 like the scanner does)
-            db_candles = CandleModel.query.filter_by(
-                symbol=setup.symbol, timeframe=setup.timeframe
-            ).order_by(CandleModel.open_time.desc()).limit(50).all()
+            # Build pre_processed_df using the strategy's pipeline
+            try:
+                lookback = strategy.get_required_lookback()
+                df = get_finalized_candles(setup.symbol, setup.timeframe, limit=lookback)
 
-            if not db_candles:
-                print(f"  -> ⚠ No candles found for {setup.symbol}/{setup.timeframe}. Skipping.")
+                if len(df) < strategy.get_min_candles():
+                    print(f"  -> ⚠ Not enough candles ({len(df)}). Skipping.")
+                    continue
+
+                df = strategy.pre_process(df, symbol=setup.symbol, timeframe=setup.timeframe)
+                df = strategy.generate_signals(df)
+            except Exception as e:
+                print(f"  -> ⚠ Failed to build pre_processed_df: {e}")
                 continue
 
-            candle_objects = [Candle.from_db_row(c.to_dict()) for c in reversed(db_candles)]
-            current_price = candle_objects[-1].close
-
-            # 3. Compute indicators snapshot
-            indicator_result = IndicatorService.compute_all(setup.symbol, setup.timeframe, include_series=True)
-            series = indicator_result.get('series', {})
-            candle_count = indicator_result.get('candle_count', 0)
-            
-            if candle_count > 0 and series:
-                indicators = StrategyRunner.prepare_indicators_snapshot(series, candle_count - 1)
-            else:
-                print("  -> ⚠ Could not compute indicators. Skipping.")
-                continue
-
-            # 4. Fetch nearest Support & Resistance zones (within 3%)
-            price_range = current_price * 0.03
-            zones = SRZone.query.filter(
-                SRZone.symbol == setup.symbol,
-                SRZone.price_level >= current_price - price_range,
-                SRZone.price_level <= current_price + price_range,
-            ).all()
-            sr_zones = [z.to_dict() for z in zones]
-
-            # 5. Fetch Higher Timeframe Context
-            htf_candles = live_scanner._fetch_htf_candles(setup.symbol, setup.timeframe)
-
-            # 6. Put onto LLM Queue
+            # Enqueue for LLM evaluation
             llm_queue.enqueue_signal(
                 watching_setup_id=setup.id,
                 signal=signal,
-                candles=candle_objects,
-                indicators=indicators,
-                sr_zones=sr_zones,
-                htf_candles=htf_candles
+                pre_processed_df=df,
             )
             enqueued_count += 1
             print(f"  -> ✅ Enqueued.\n")

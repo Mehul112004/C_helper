@@ -169,6 +169,11 @@ class LLMClient:
             logger.error(f"Unexpected error in LLM evaluate_signal: {e}")
             return None, prompt, f"ERROR: {e}"
 
+    @staticmethod
+    def ping_status() -> bool:
+        provider = get_llm_provider()
+        return provider.ping_status()
+
 
 def _parse_llm_response(
     content: str, prompt: str, raw_response: str
@@ -202,6 +207,10 @@ def _parse_llm_response(
 
     try:
         raw_dict = json.loads(content, strict=False)
+
+        # Coerce confidence_score from float to int (LLMs sometimes return 7.5 instead of 7)
+        raw_dict['confidence_score'] = int(float(raw_dict.get('confidence_score', 0)))
+
         parsed = LLMVerdictSchema.model_validate(raw_dict)
 
         if parsed.verdict not in ('CONFIRM', 'REJECT', 'MODIFY'):
@@ -231,9 +240,3 @@ def _parse_llm_response(
         logger.error(f"LLM schema validation error: {e}")
         return None, prompt, f"ValidationError: {e}"
 
-
-@staticmethod
-def ping_status() -> bool:
-    """Check if the LLM backend is online."""
-    provider = get_llm_provider()
-    return provider.ping_status()

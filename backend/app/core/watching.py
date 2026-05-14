@@ -14,7 +14,20 @@ import os
 import uuid
 from datetime import datetime
 
+import numpy as np
+
 from app.models.db import db, WatchingSetup
+
+
+def _to_py(value):
+    """Convert numpy scalars to native Python types for SQL parameters."""
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    return value
 
 
 class WatchingManager:
@@ -60,12 +73,12 @@ class WatchingManager:
 
         if existing:
             # Dedup: update the existing setup
-            existing.confidence = signal.confidence
+            existing.confidence = _to_py(signal.confidence)
             existing.notes = signal.notes
-            existing.entry = signal.entry
-            existing.sl = signal.sl
-            existing.tp1 = signal.tp1
-            existing.tp2 = signal.tp2
+            existing.entry = _to_py(signal.entry)
+            existing.sl = _to_py(signal.sl)
+            existing.tp1 = _to_py(signal.tp1)
+            existing.tp2 = _to_py(signal.tp2)
             existing.direction = signal.direction
             existing.candles_since_detected = 0  # Reset expiry counter
             db.session.commit()
@@ -79,11 +92,11 @@ class WatchingManager:
                 timeframe=signal.timeframe,
                 direction=signal.direction,
                 strategy_name=signal.strategy_name,
-                confidence=signal.confidence,
-                entry=signal.entry,
-                sl=signal.sl,
-                tp1=signal.tp1,
-                tp2=signal.tp2,
+                confidence=_to_py(signal.confidence),
+                entry=_to_py(signal.entry),
+                sl=_to_py(signal.sl),
+                tp1=_to_py(signal.tp1),
+                tp2=_to_py(signal.tp2),
                 notes=signal.notes or '',
                 status='WATCHING',
                 candles_since_detected=0,
