@@ -23,12 +23,20 @@ CRITICAL DESIGN CHOICES:
   - S/R zones do NOT use the kill-switch pattern (handled in sr_engine.py)
 """
 
+import warnings
 import numpy as np
 import pandas as pd
 from typing import Optional
 
 from app.core.indicators import compute_atr
 from app.core.fractals import detect_swing_points_df, build_swing_list, determine_trend_from_swings
+
+# Suppress harmless pandas FutureWarnings from forward-fill / NaT column init
+# These fire heavily during live-tick FVG/OB extraction (EMA Cross Alert strategy)
+warnings.filterwarnings('ignore', category=FutureWarning,
+                        message='.*incompatible dtype.*')
+warnings.filterwarnings('ignore', category=FutureWarning,
+                        message='.*Downcasting object dtype.*')
 
 MAX_ZONES = 5  # Max simultaneous FVGs/OBs tracked
 

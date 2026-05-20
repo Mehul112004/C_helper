@@ -161,6 +161,9 @@ class BaseStrategy(ABC):
     # ── Confidence threshold ──
     min_confidence: float = 0.5  # Must pass at least 50% of total gates
 
+    # ── Live tick execution ──
+    run_on_live_candle: bool = False  # Override True to run on every kline tick
+
     # ── Feature declaration ──
     required_features: List[str] = []
     # Valid: 'ema', 'rsi', 'macd', 'bb', 'atr', 'adx', 'volume_ma',

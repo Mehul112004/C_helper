@@ -31,7 +31,7 @@ def format_confirmed_signal(signal: ConfirmedSignal) -> str:
         time_str = dt.strftime("%d %b %Y %H:%M IST")
         
     # Reason formatting
-    reasoning = signal.reasoning_text.strip()
+    reasoning = _escape_md(signal.reasoning_text.strip())
     
     msg = f"""
 {direction_badge} CONFIRMED SIGNAL
@@ -39,18 +39,18 @@ def format_confirmed_signal(signal: ConfirmedSignal) -> str:
 *Pair*      : {_escape_md(signal.symbol)}
 *Direction* : {_escape_md(signal.direction)}
 *Timeframe* : {_escape_md(signal.timeframe)}
-*Entry*     : ${signal.entry:,.4f}
-*SL*        : ${signal.sl:,.4f}
-*TP1*       : ${signal.tp1:,.4f}
-*TP2*       : ${signal.tp2:,.4f}
-*R/R*       : 1 : {rr_ratio:.1f}
+*Entry*     : ${_escape_md(f"{signal.entry:,.4f}")}
+*SL*        : ${_escape_md(f"{signal.sl:,.4f}")}
+*TP1*       : ${_escape_md(f"{signal.tp1:,.4f}")}
+*TP2*       : ${_escape_md(f"{signal.tp2:,.4f}")}
+*R/R*       : 1 : {_escape_md(f"{rr_ratio:.1f}")}
 *Strategy*  : {_escape_md(signal.strategy_name)}
-*Confidence*: {signal.confidence * 100:.0f}%
+*Confidence*: {_escape_md(f"{signal.confidence * 100:.0f}%")}
 
 *Analysis*  :
 {reasoning}
 
-⏱ {time_str}
+⏱ {_escape_md(time_str)}
 """
     return msg.strip()
 
@@ -83,13 +83,13 @@ def format_watching_signal(setup) -> str:
 *Direction* : {_escape_md(setup.direction)}
 *Timeframe* : {_escape_md(setup.timeframe)}
 *Strategy*  : {_escape_md(setup.strategy_name)}
-*Confidence*: {setup.confidence * 100:.0f}%
+*Confidence*: {_escape_md(f"{setup.confidence * 100:.0f}%")}
 
 *Notes*     : 
 {notes}
 
 *Status*    : PENDING LLM CONFIRMATION\\.\\.\\.
-⏱ {time_str}
+⏱ {_escape_md(time_str)}
 """
     return msg.strip()
 
@@ -116,7 +116,7 @@ def format_outcome_update(signal: ConfirmedSignal, outcome: str) -> str:
     else:
         icon = "ℹ️"
         level = 0.0
-    return f"{icon} {_escape_md(signal.symbol)} {_escape_md(signal.direction)} — {label} hit at ${level:,.4f}"
+    return f"{icon} {_escape_md(signal.symbol)} {_escape_md(signal.direction)} — {label} hit at ${_escape_md(f'{level:,.4f}')}"
 
 def format_rejected_signal(setup, reasoning: str) -> str:
     """

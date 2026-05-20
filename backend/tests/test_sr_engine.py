@@ -329,7 +329,7 @@ class TestStrengthScoring:
 
     def test_timeframe_weight_values(self):
         """Verify all expected timeframes have weights defined."""
-        expected_timeframes = ['1d', '4h', '1h', '15m', '5m']
+        expected_timeframes = ['1d', '4h', '1h', '30m', '15m', '5m']
         for tf in expected_timeframes:
             assert tf in TIMEFRAME_WEIGHTS
             assert 0 < TIMEFRAME_WEIGHTS[tf] <= 1.0

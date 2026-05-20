@@ -8,7 +8,7 @@ interface Dataset {
   count: number;
 }
 
-const ALL_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d'];
+const ALL_TIMEFRAMES = ['5m', '15m', '30m', '1h', '4h', '1d'];
 const CANDLE_LIMITS = [100, 250, 500, 1000, 2500];
 
 interface ChartControlsProps {

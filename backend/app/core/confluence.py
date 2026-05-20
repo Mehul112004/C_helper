@@ -26,6 +26,7 @@ from typing import Optional, Dict, List
 HTF_MAP = {
     '5m': '15m',
     '15m': '1h',
+    '30m': '4h',
     '1h': '4h',
     '4h': '1d',
     '1d': None,

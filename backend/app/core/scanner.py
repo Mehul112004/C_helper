@@ -92,6 +92,7 @@ class LiveScanner:
         self._lock = threading.Lock()
         self._app = app
         self._live_candle_throttle: dict[str, float] = {}  # key → last_emit_ts
+        self._live_strategy_throttle: dict[str, float] = {}  # key → last_run_ts
 
     def set_app(self, app):
         """Set the Flask app reference for app context in background threads."""
@@ -525,6 +526,16 @@ class LiveScanner:
                 except Exception as e:
                     logger.error(f"[LiveScanner] Live candle DB persist error: {e}")
 
+        # ── Run live-tick strategies (throttled to every 10s) ──
+        live_strat_key = f"strat_{session_id}_{symbol}_{timeframe}"
+        last_strat_run = self._live_strategy_throttle.get(live_strat_key, 0)
+        if now - last_strat_run >= 10.0:
+            self._live_strategy_throttle[live_strat_key] = now
+            try:
+                self._run_live_strategies(session_id, symbol, timeframe, candle_data)
+            except Exception as e:
+                logger.error(f"[LiveScanner] Live strategy execution error: {e}")
+
         sse_manager.publish("live_candle", {
             "session_id": session_id,
             "symbol": symbol,
@@ -538,6 +549,61 @@ class LiveScanner:
             "volume": candle_data["volume"],
             "is_closed": candle_data["is_closed"],
         })
+
+    def _run_live_strategies(self, session_id, symbol, timeframe, candle_data):
+        """
+        Execute strategies with run_on_live_candle=True on every live kline tick.
+        Fetches candles from DB (including the open live candle), pre-processes,
+        and runs generate_signals. Each strategy handles its own alert dispatch.
+        """
+        from app.core.strategy_loader import registry
+        from app.models.db import Candle as CandleModel
+
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if not session or session.status != "active":
+                return
+            strategy_names = list(session.strategy_names)
+
+        resolved = []
+        for name in strategy_names:
+            strat = registry.get_by_name(name)
+            if strat and getattr(strat, 'run_on_live_candle', False) and timeframe in strat.timeframes:
+                resolved.append(strat)
+        if not resolved:
+            return
+
+        with self._app.app_context():
+            try:
+                candles = (
+                    CandleModel.query
+                    .filter_by(symbol=symbol, timeframe=timeframe)
+                    .order_by(CandleModel.open_time.desc())
+                    .limit(200)
+                    .all()
+                )
+                if len(candles) < 30:
+                    return
+
+                data = [c.to_dict() for c in reversed(candles)]
+                df = pd.DataFrame(data)
+                df['open_time'] = pd.to_datetime(df['open_time'])
+                df = df.sort_values('open_time').reset_index(drop=True)
+
+                for strategy in resolved:
+                    try:
+                        df_strat = df.copy()
+                        df_strat = strategy.pre_process(
+                            df_strat, symbol=symbol, timeframe=timeframe
+                        )
+                        strategy.generate_signals(df_strat)
+                    except Exception as e:
+                        print(f"[LiveScanner] Live strategy {strategy.name} "
+                              f"error on {symbol}/{timeframe}: {e}")
+
+            except Exception as e:
+                print(f"[LiveScanner] Live strategy fetch error "
+                      f"for {symbol}/{timeframe}: {e}")
 
     def _backfill_historical_data(self, symbol: str, timeframes: list[str]):
         """

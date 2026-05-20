@@ -32,7 +32,7 @@ class BacktestEngine:
     trade simulation, and metrics calculation.
     """
 
-    VALID_TIMEFRAMES = ['15m', '1h', '4h', '1d']  # Primary signal TFs
+    VALID_TIMEFRAMES = ['15m', '30m', '1h', '4h', '1d']  # Primary signal TFs
 
     # ═══════════════════════════════════════════════════════════════
     #  Trade Simulation (Vectorized)

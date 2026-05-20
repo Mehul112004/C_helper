@@ -36,7 +36,7 @@ export default function SessionPanel({
     "1h",
   ]);
 
-  const AVAILABLE_TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
+  const AVAILABLE_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "1d"];
   const AVAILABLE_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"];
 
   const handleStart = () => {

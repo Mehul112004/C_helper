@@ -34,7 +34,7 @@ def get_indicators():
         }), 400
 
     # Validate timeframe
-    valid_timeframes = ['5m', '15m', '1h', '4h', '1d']
+    valid_timeframes = ['5m', '15m', '30m', '1h', '4h', '1d']
     if timeframe not in valid_timeframes:
         return jsonify({
             'error': f'Invalid timeframe: {timeframe}. Valid: {valid_timeframes}'

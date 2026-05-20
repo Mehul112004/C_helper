@@ -178,13 +178,16 @@ export default function SignalFeed() {
 
   const handleQuickStart = useCallback(async () => {
     if (strategies.length === 0) return;
-    const allStratNames = strategies.map((s) => s.name);
-    const timeframes = ["5m", "15m", "1h", "4h", "1d"];
+    const allowedStrategies = ["Trend Following", "Burner 9/20", "EMA Cross Alert"];
+    const selectedStratNames = strategies
+      .map((s) => s.name)
+      .filter((name) => allowedStrategies.includes(name));
+    const timeframes = ["5m", "15m", "30m", "1h", "4h", "1d"];
 
     try {
-      await handleStartSession("BTCUSDT", allStratNames, timeframes);
-      await handleStartSession("ETHUSDT", allStratNames, timeframes);
-      await handleStartSession("SOLUSDT", allStratNames, timeframes);
+      await handleStartSession("BTCUSDT", selectedStratNames, timeframes);
+      await handleStartSession("ETHUSDT", selectedStratNames, timeframes);
+      await handleStartSession("SOLUSDT", selectedStratNames, timeframes);
     } catch (e) {
       console.error("Quick Start failed", e);
     }
